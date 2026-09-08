@@ -1,0 +1,22 @@
+# Secrets - never commit
+.env
+credentials.json
+token.json
+*.pem
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Django
+db.sqlite3
+staticfiles/
+*.log
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
