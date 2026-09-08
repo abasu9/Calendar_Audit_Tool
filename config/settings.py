@@ -109,7 +109,7 @@ INSTALLED_APPS = [
     # Our apps
     "googlecal",  # Google OAuth and Calendar API integration (Phase 1)
     "calsync",    # Calendar sync engine with push notifications (Phase 2)
-    "audit",      # Audit report generation and API (Phase 3)
+    "calaudit",   # Audit report generation and API (Phase 3)
 ]
 
 MIDDLEWARE = [

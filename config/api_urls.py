@@ -28,4 +28,9 @@ urlpatterns = [
     # Mounts calsync/urls.py here
     # Full URL: /api/webhook/
     path("", include("calsync.urls")),
+    
+    # Audit report endpoints (Phase 3)
+    # Mounts calaudit/urls.py here
+    # Full URL: /api/audit/monthly-time/, etc.
+    path("audit/", include("calaudit.urls")),
 ]
