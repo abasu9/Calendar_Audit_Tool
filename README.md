@@ -1,151 +1,302 @@
 # Calendar Audit Tool
 
-Reads a user's primary Google Calendar and reports how much time they spend in
-meetings, and on what.
+A Django application that connects to a user's primary Google Calendar,
+synchronizes recent events into PostgreSQL, and presents a dashboard of meeting
+habits and time allocation.
 
-Stack: Python 3.14 / Django 6.1 / Django REST Framework / PostgreSQL 18.
+The primary data-refresh path is a Google Calendar push webhook. Users can also
+request an on-demand sync from either dashboard when a notification is missed
+or delayed. There is no periodic scheduler.
 
-## Status
+## Features
 
-Phase 1 (bootstrap and Google Calendar API smoke test) is complete. The
-`calsync` and `audit` apps are registered but empty; they get filled in by the
-sync engine and the report in later phases.
+- Google OAuth 2.0 authorization with PKCE and offline refresh tokens
+- Upcoming seven-day calendar preview
+- Full and `syncToken`-based incremental event synchronization
+- Real-time Google Calendar push notifications with token verification
+- Manual backup sync from the application and audit dashboards
+- PostgreSQL storage with Supabase SSL and pooler support
+- Six calendar-audit metrics covering the previous three months
+- Responsive, Avoma-inspired dashboard styling
+- Database health and connection-check utilities
 
-## Layout
+## Technology
 
-```
-config/       Django project: settings, URL conf, health endpoint
-googlecal/    Google OAuth and API access
-  oauth.py                              server-side authorization-code flow
-  client.py                             load_credentials() / build_service()
-  views.py                              dashboard + OAuth start/callback
-  templates/googlecal/dashboard.html    auth status and event preview
-  management/commands/list_events.py    prints primary-calendar events
-calsync/      (empty) Phase 2: Event model, syncToken engine, push webhook
-audit/        (empty) Phase 3: metrics, DRF endpoints, HTML report
+- Python 3.14
+- Django 6.1
+- Django REST Framework
+- PostgreSQL through Psycopg 3
+- Supabase PostgreSQL or a local PostgreSQL server
+- Google Calendar API
+
+## Project layout
+
+```text
+config/
+  database.py            DATABASE_URL, SSL, and pooler configuration
+  settings.py            Django and Google integration settings
+  api_urls.py             API route composition
+  views.py                Database health endpoint
+
+googlecal/
+  client.py               Credential loading and Google API client
+  oauth.py                OAuth authorization-code flow
+  views.py                Main dashboard and OAuth callbacks
+  templates/              Connected-calendar dashboard
+  management/commands/    Calendar preview command
+
+calsync/
+  models.py               Events, sync state, and watch channels
+  sync.py                 Full and incremental synchronization
+  watch.py                Google push-channel management
+  views.py                Manual sync and webhook endpoints
+  management/commands/    Sync, watch, and database utilities
+
+calaudit/
+  queries.py              Calendar analytics queries
+  views.py                Audit API views and dashboard
+  templates/              Audit dashboard
+
 scripts/
-  quickstart.py   standalone API smoke test, Desktop-app clients only
+  quickstart.py           Standalone Google API smoke test
+  simulate_push.py        Local webhook simulation helper
 ```
 
-## One-time setup
+## Prerequisites
 
-### 1. Google Cloud
+- Python 3.14
+- A Google Cloud project with the Google Calendar API enabled
+- A Supabase project or local PostgreSQL database
+- ngrok or another public HTTPS tunnel for local webhook delivery
 
-1. Create or select a project at <https://console.cloud.google.com>.
-2. **APIs & Services > Library > "Google Calendar API" > Enable**.
-3. **Google Auth Platform > Branding > Get Started**. Set an app name and your
-   email as the support email.
-   - **Audience**: choose **Internal** only if the account belongs to a Google
-     Workspace domain. For a personal `@gmail.com` account choose **External**,
-     then add your own address under **Audience > Test users**. Skipping the
-     test-user step causes `access_denied` on first login.
-4. **Google Auth Platform > Clients > Create Client**. Choose **Web
-   application**, and under **Authorized redirect URIs** add exactly:
+## Installation
 
-   ```
-   http://localhost:8000/oauth2/callback/
-   ```
-
-   The value must match `GOOGLE_OAUTH_REDIRECT_URI` character for character,
-   trailing slash included, or Google returns `redirect_uri_mismatch`. Google
-   permits plain `http` only for `localhost`.
-5. Download the JSON and save it as `credentials.json` in the project root.
-
-`credentials.json` and the `token.json` written after authorisation are both
-gitignored. Never commit them.
-
-A **Desktop app** client works too, but only with `scripts/quickstart.py`. It
-cannot be used with the browser flow, since the desktop flow redirects to
-`http://localhost:<random port>/`, which no web client can register.
-
-### 2. Database
-
-```bash
-brew install postgresql@18
-brew services start postgresql@18
-brew postinstall postgresql@18       # only if the data cluster is missing
-createdb calendar_audit
-```
-
-### 3. Python environment
+Create the virtual environment and install dependencies:
 
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-cp .env.example .env                 # then edit POSTGRES_USER etc.
+cp .env.example .env
+```
+
+## Environment configuration
+
+All secrets belong in `.env`, which is gitignored. Do not add credentials to
+`.env.example`.
+
+### Supabase database
+
+In the Supabase dashboard, open the project's **Connect** panel and copy the
+Session pooler connection URI. Session mode uses port `5432` and is appropriate
+for this persistent Django application, including from IPv4-only networks.
+
+```dotenv
+DATABASE_URL=postgresql://postgres.PROJECT_REF:ENCODED_PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres?sslmode=require
+DB_CONN_MAX_AGE=60
+DB_CONN_HEALTH_CHECKS=True
+DB_CONNECT_TIMEOUT=10
+```
+
+Percent-encode reserved characters in the password before placing it in the
+URL. A transaction-pooler URI on port `6543` is also supported; the database
+utility automatically disables prepared statements and server-side cursors
+for that mode.
+
+When `DATABASE_URL` is absent, the application uses these local PostgreSQL
+settings instead:
+
+```dotenv
+POSTGRES_DB=calendar_audit
+POSTGRES_USER=
+POSTGRES_PASSWORD=
+POSTGRES_HOST=localhost
+POSTGRES_PORT=5432
+```
+
+Verify the configured target without printing its password or connection URI:
+
+```bash
+.venv/bin/python manage.py check_database
+```
+
+### Google OAuth
+
+1. In Google Cloud, enable **Google Calendar API**.
+2. Configure the Google Auth Platform consent screen.
+3. For a personal Google account, select an external audience and add the
+   account under **Test users**.
+4. Create an OAuth client of type **Web application**.
+5. Register this redirect URI exactly, including the trailing slash:
+
+   ```text
+   http://localhost:8000/oauth2/callback/
+   ```
+
+6. Download the client JSON as `credentials.json` in the project root.
+
+Configure the corresponding paths in `.env`:
+
+```dotenv
+GOOGLE_CREDENTIALS_FILE=credentials.json
+GOOGLE_TOKEN_FILE=token.json
+GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8000/oauth2/callback/
+REPORT_TIME_ZONE=America/Chicago
+```
+
+The browser flow writes `token.json` after authorization. Both credential files
+are gitignored and must never be committed.
+
+## Database initialization
+
+Apply the Django schema to the configured database:
+
+```bash
 .venv/bin/python manage.py migrate
 ```
 
-## Usage
+Switching from local PostgreSQL to Supabase creates an empty database. Migrations
+create the tables but do not copy local events, sync tokens, sessions, or watch
+channels.
 
-Start the server and authorise once in the browser. Approving Google's consent
-screen caches the token in `token.json`, after which every other entry point
-works:
+## Run the application
+
+Start Django:
 
 ```bash
 .venv/bin/python manage.py runserver
 ```
 
-Then open <http://localhost:8000/> and click **Connect Google Calendar**. The
-page then shows your primary calendar and the next 7 days of events.
-
-| Route | Purpose |
-| --- | --- |
-| `/` | Auth status and event preview |
-| `/oauth2/start/` | Redirects to Google's consent screen |
-| `/oauth2/callback/` | Exchanges the code for tokens |
-| `/api/health/` | `{"status": "ok", "database": "ok"}` |
-
-The same calendar is readable from the command line once authorised:
+Open <http://localhost:8000/> and select **Connect Google Calendar**. After
+authorization, perform the initial sync from the dashboard or the command line:
 
 ```bash
-.venv/bin/python manage.py list_events --days 7          # next 7 days
-.venv/bin/python manage.py list_events --days 30 --past  # last 30 days
+.venv/bin/python manage.py sync_calendar --full
 ```
 
-## Notes
+The initial full sync imports the previous 90 days and establishes the Google
+`syncToken` used by later incremental syncs.
 
-- OAuth scopes are `openid`, `userinfo.email` and `calendar.readonly`.
-  `calendar.readonly` covers both `events.list` and `events.watch`, so no
-  broader grant is needed. Changing `GOOGLE_OAUTH_SCOPES` invalidates
-  `token.json`; delete it and re-authorise.
-- The flow requests `access_type=offline` with `prompt=consent` so Google
-  returns a refresh token, which the sync engine needs to poll without the
-  user present. It also uses PKCE.
-- Two `oauthlib` restrictions are relaxed in `config/settings.py`:
-  `OAUTHLIB_INSECURE_TRANSPORT` (only when `DEBUG` and the callback is plain
-  http, since the localhost callback is not HTTPS) and
-  `OAUTHLIB_RELAX_TOKEN_SCOPE` (Google echoes the granted scopes back in a
-  different order for `openid` requests, which oauthlib otherwise treats as a
-  scope-change attack).
-- Event fetches use `singleEvents=True`, which expands recurring events into
-  individual instances. The audit metrics need actual occurrences, not rules.
-- Calendar data is handled in UTC. `REPORT_TIME_ZONE` only affects how events
-  are displayed and how they are bucketed into weeks and months.
-- Google Calendar push notifications are the primary sync mechanism and
-  trigger a `syncToken`-based incremental fetch through `/api/webhook/`.
-  Calendar data can also be refreshed on demand from either dashboard as a
-  backup for missed or delayed notifications. The manual action automatically
-  falls back to a full sync when there is no usable token.
+## Configure real-time webhook sync
 
-## Supabase database
-
-Copy the Session pooler connection URI from the Supabase project's **Connect**
-panel into `.env` as `DATABASE_URL`. Session mode uses port `5432` and works on
-IPv4 networks. Percent-encode special characters in the database password.
-
-```dotenv
-DATABASE_URL=postgresql://postgres.PROJECT_REF:ENCODED_PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres?sslmode=require
-DB_CONN_MAX_AGE=60
-```
-
-Then validate the connection and apply the existing Django migrations:
+Google requires a publicly reachable HTTPS endpoint. For local development,
+start a tunnel that forwards to Django's actual port:
 
 ```bash
-python manage.py check_database
-python manage.py migrate
+ngrok http 8000
 ```
 
-For a serverless deployment, Supabase's transaction pooler uses port `6543`.
-The database utility detects that port and disables prepared statements and
-server-side cursors automatically.
+Confirm that ngrok reports a forwarding target of `http://localhost:8000`, then
+register its current HTTPS URL:
+
+```bash
+.venv/bin/python manage.py setup_watch \
+  --url https://YOUR-NGROK-HOST/api/webhook/
+```
+
+Inspect or stop active channels with:
+
+```bash
+.venv/bin/python manage.py stop_watch --list
+.venv/bin/python manage.py stop_watch --channel-id CHANNEL_UUID
+.venv/bin/python manage.py stop_watch --all
+```
+
+Watch channels expire and Google does not renew them automatically. Register a
+replacement before expiration. Avoid multiple active channels for the same
+calendar and webhook URL, since each channel produces its own notification.
+
+When the application database changes, such as moving from local PostgreSQL to
+Supabase, register a new channel so its verification token and resource ID are
+stored in the new database.
+
+## Sync behavior
+
+- Webhook notifications are the primary real-time sync mechanism.
+- **Sync calendar** on either dashboard is the manual backup mechanism.
+- Incremental sync requests only changes since the stored Google `syncToken`.
+- Missing or expired sync tokens automatically trigger a full sync.
+- Google HTTP 410 responses also trigger a fresh full sync.
+- Full sync reconciles events from the previous 90 days.
+- The audit database stores past events; future events remain available in the
+  seven-day preview directly from Google Calendar.
+
+There is intentionally no cron job or periodic synchronization command.
+
+## Audit dashboard
+
+Open <http://localhost:8000/api/audit/> after the initial sync. It displays:
+
+1. Total meeting time by month
+2. Months with the most and fewest meetings
+3. Busiest and most relaxed weeks
+4. Average meetings and meeting time per week
+5. Most frequent meeting contacts
+6. Recruiting and interview meeting time
+
+Metrics use `REPORT_TIME_ZONE` for calendar bucketing while timestamps remain
+stored in UTC.
+
+## Routes
+
+| Method | Route | Purpose |
+| --- | --- | --- |
+| `GET` | `/` | OAuth status, calendar preview, and manual sync |
+| `GET` | `/oauth2/start/` | Begin Google authorization |
+| `GET` | `/oauth2/callback/` | Complete Google authorization |
+| `POST` | `/api/sync/` | Run a CSRF-protected manual sync |
+| `POST` | `/api/webhook/` | Receive Google push notifications |
+| `GET` | `/api/audit/` | Render the audit dashboard |
+| `GET` | `/api/audit/monthly-time/` | Monthly meeting time |
+| `GET` | `/api/audit/meeting-extremes/` | Highest and lowest meeting months |
+| `GET` | `/api/audit/weekly-extremes/` | Busiest and most relaxed weeks |
+| `GET` | `/api/audit/weekly-averages/` | Weekly meeting averages |
+| `GET` | `/api/audit/top-contacts/` | Most frequent contacts |
+| `GET` | `/api/audit/interview-time/` | Recruiting and interview time |
+| `GET` | `/api/health/` | Application and database health |
+
+## Useful commands
+
+```bash
+# Verify database connectivity without exposing credentials
+.venv/bin/python manage.py check_database
+
+# Initial or forced full calendar sync
+.venv/bin/python manage.py sync_calendar --full
+
+# Incremental sync, with automatic full-sync fallback
+.venv/bin/python manage.py sync_calendar
+
+# Preview upcoming or past events directly from Google
+.venv/bin/python manage.py list_events --days 7
+.venv/bin/python manage.py list_events --days 30 --past
+
+# Exercise a locally running webhook with a stored watch channel
+.venv/bin/python manage.py test_webhook
+```
+
+## Testing
+
+The test suite covers OAuth helpers, calendar parsing and synchronization,
+webhook validation, manual sync, audit queries and APIs, and database URL
+configuration.
+
+```bash
+.venv/bin/python manage.py check
+.venv/bin/python manage.py test
+```
+
+Tests create a separate test database. Do not point test runs at a production
+Supabase project unless the configured role is intentionally allowed to create
+and destroy test databases.
+
+## Security notes
+
+- Never commit `.env`, `credentials.json`, or `token.json`.
+- Use `sslmode=require` or Supabase's CA certificate with
+  `sslmode=verify-full` for remote database traffic.
+- Set `DEBUG=False`, use a strong `SECRET_KEY`, and define production
+  `ALLOWED_HOSTS` before deployment.
+- The Google webhook is CSRF-exempt because Google cannot supply a Django CSRF
+  token; channel-token verification prevents arbitrary requests from invoking
+  synchronization.
+- The manual sync endpoint remains CSRF-protected.

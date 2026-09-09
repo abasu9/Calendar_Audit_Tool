@@ -71,13 +71,6 @@
       border-radius: 50%;
     }
     .page-header h1 { color: #fff; }
-    .sub {
-      position: relative;
-      z-index: 1;
-      margin: 0;
-      color: rgba(255, 255, 255, 0.66);
-      font-size: 1.05rem;
-    }
     .card {
       margin: 1rem 0;
       padding: 1.5rem 1.75rem;
@@ -140,7 +133,6 @@
 
   <header class="page-header">
     <h1>Calendar Audit Tool</h1>
-    <p class="sub">Phase 1 &mdash; Google Calendar connectivity check</p>
   </header>
 
   {% if error %}
@@ -234,14 +226,6 @@
       </p>
     </div>
 
-    <div class="card">
-      <h2>Also available</h2>
-      <p>
-        <code>manage.py list_events --days 30 --past</code> reads the same
-        calendar from the command line, and
-        <a href="/api/health/">/api/health/</a> reports database connectivity.
-      </p>
-    </div>
   {% endif %}
 
   <script>
