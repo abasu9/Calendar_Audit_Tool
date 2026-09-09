@@ -11,6 +11,10 @@ from . import views
 app_name = "calaudit"
 
 urlpatterns = [
+    # Dashboard page (HTML)
+    # Full URL: /api/audit/
+    path("", views.dashboard, name="dashboard"),
+    
     # Monthly meeting time metric
     # Full URL: /api/audit/monthly-time/
     path("monthly-time/", views.MonthlyMeetingTimeView.as_view(), name="monthly-time"),

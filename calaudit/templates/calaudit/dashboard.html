@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Calendar Audit Dashboard</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #fff;
+      --card-bg: #fff;
+      --border: rgba(128, 128, 128, 0.25);
+      --text: #1a1a1a;
+      --text-muted: rgba(0, 0, 0, 0.6);
+      --accent: #1a73e8;
+      --success: #34a853;
+      --warning: #f9ab00;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #1a1a1a;
+        --card-bg: #242424;
+        --border: rgba(255, 255, 255, 0.15);
+        --text: #e8e8e8;
+        --text-muted: rgba(255, 255, 255, 0.6);
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 2rem;
+      line-height: 1.5;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    header {
+      margin-bottom: 2rem;
+    }
+    h1 {
+      margin: 0 0 0.25rem;
+      font-size: 1.75rem;
+    }
+    .subtitle {
+      color: var(--text-muted);
+      margin: 0;
+    }
+    .back-link {
+      color: var(--accent);
+      text-decoration: none;
+      font-size: 0.9rem;
+    }
+    .back-link:hover {
+      text-decoration: underline;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 1.5rem;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 1.25rem;
+    }
+    .card h2 {
+      margin: 0 0 1rem;
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .loading {
+      color: var(--text-muted);
+      font-style: italic;
+    }
+    .error {
+      color: #d93025;
+    }
+    .stat-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .stat-row:last-child {
+      border-bottom: none;
+    }
+    .stat-label {
+      color: var(--text-muted);
+      font-size: 0.9rem;
+    }
+    .stat-value {
+      font-size: 1.1rem;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .big-stat {
+      text-align: center;
+      padding: 1rem 0;
+    }
+    .big-stat .number {
+      font-size: 2.5rem;
+      font-weight: 700;
+      color: var(--accent);
+    }
+    .big-stat .label {
+      color: var(--text-muted);
+      font-size: 0.85rem;
+    }
+    .highlight-box {
+      background: rgba(26, 115, 232, 0.1);
+      border-radius: 8px;
+      padding: 0.75rem 1rem;
+      margin-bottom: 0.75rem;
+    }
+    .highlight-box.warning {
+      background: rgba(249, 171, 0, 0.15);
+    }
+    .highlight-box.success {
+      background: rgba(52, 168, 83, 0.15);
+    }
+    .highlight-box .title {
+      font-weight: 600;
+      font-size: 0.85rem;
+      margin-bottom: 0.25rem;
+    }
+    .highlight-box .value {
+      font-size: 1.25rem;
+      font-weight: 600;
+    }
+    .highlight-box .detail {
+      font-size: 0.8rem;
+      color: var(--text-muted);
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.5rem 0.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+    th {
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    td.num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .empty-state {
+      text-align: center;
+      color: var(--text-muted);
+      padding: 1.5rem;
+      font-size: 0.9rem;
+    }
+    .tag {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .tag.busy { background: rgba(217, 48, 37, 0.15); color: #d93025; }
+    .tag.relaxed { background: rgba(52, 168, 83, 0.15); color: #34a853; }
+    .tag.normal { background: rgba(128, 128, 128, 0.15); color: var(--text-muted); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <a href="/" class="back-link">&larr; Back to Calendar</a>
+      <h1>Calendar Audit Dashboard</h1>
+      <p class="subtitle">Summary of your meeting patterns over the last 3 months</p>
+    </header>
+
+    <div class="grid">
+      <!-- Metric 1: Monthly Meeting Time -->
+      <div class="card" id="card-monthly">
+        <h2>Monthly Meeting Time</h2>
+        <div class="loading">Loading...</div>
+      </div>
+
+      <!-- Metric 2: Meeting Extremes -->
+      <div class="card" id="card-extremes">
+        <h2>Meeting Extremes</h2>
+        <div class="loading">Loading...</div>
+      </div>
+
+      <!-- Metric 3: Weekly Extremes -->
+      <div class="card" id="card-weekly-extremes">
+        <h2>Busiest & Most Relaxed Week</h2>
+        <div class="loading">Loading...</div>
+      </div>
+
+      <!-- Metric 4: Weekly Averages -->
+      <div class="card" id="card-weekly-avg">
+        <h2>Weekly Averages</h2>
+        <div class="loading">Loading...</div>
+      </div>
+
+      <!-- Metric 5: Top Contacts -->
+      <div class="card" id="card-contacts">
+        <h2>Top Meeting Contacts</h2>
+        <div class="loading">Loading...</div>
+      </div>
+
+      <!-- Metric 6: Interview Time -->
+      <div class="card" id="card-interview">
+        <h2>Recruiting / Interview Time</h2>
+        <div class="loading">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Helper to format hours nicely
+    function formatHours(hours) {
+      if (hours === 0) return '0 hrs';
+      if (hours < 1) return `${Math.round(hours * 60)} min`;
+      return `${hours.toFixed(1)} hrs`;
+    }
+
+    // Helper to format date in US format (MM/DD/YYYY)
+    function formatDateUS(dateStr) {
+      const [year, month, day] = dateStr.split('-');
+      return `${month}/${day}/${year}`;
+    }
+
+    // Helper to get ordinal suffix (1st, 2nd, 3rd, 4th, etc.)
+    function getOrdinal(n) {
+      const s = ['th', 'st', 'nd', 'rd'];
+      const v = n % 100;
+      return n + (s[(v - 20) % 10] || s[v] || s[0]);
+    }
+
+    // Helper to format week as "3rd week of June 2026"
+    function formatWeekOfMonth(startDate) {
+      const date = new Date(startDate + 'T00:00:00');
+      const dayOfMonth = date.getDate();
+      const weekOfMonth = Math.ceil(dayOfMonth / 7);
+      
+      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+                          'July', 'August', 'September', 'October', 'November', 'December'];
+      const monthName = monthNames[date.getMonth()];
+      const year = date.getFullYear();
+      
+      return `${getOrdinal(weekOfMonth)} week of ${monthName} ${year}`;
+    }
+
+    // Fetch and render Monthly Meeting Time
+    async function loadMonthlyTime() {
+      const card = document.getElementById('card-monthly');
+      try {
+        const res = await fetch('/api/audit/monthly-time/');
+        const data = await res.json();
+        
+        if (data.data.length === 0) {
+          card.innerHTML = `<h2>Monthly Meeting Time</h2><div class="empty-state">No meeting data available</div>`;
+          return;
+        }
+        
+        let html = `<h2>Monthly Meeting Time</h2><table>
+          <thead><tr><th>Month</th><th class="num">Hours</th></tr></thead><tbody>`;
+        
+        data.data.forEach(row => {
+          html += `<tr><td>${row.label}</td><td class="num">${formatHours(row.total_hours)}</td></tr>`;
+        });
+        
+        html += '</tbody></table>';
+        card.innerHTML = html;
+      } catch (e) {
+        card.innerHTML = `<h2>Monthly Meeting Time</h2><div class="error">Failed to load data</div>`;
+      }
+    }
+
+    // Fetch and render Meeting Extremes
+    async function loadMeetingExtremes() {
+      const card = document.getElementById('card-extremes');
+      try {
+        const res = await fetch('/api/audit/meeting-extremes/');
+        const data = await res.json();
+        
+        if (!data.highest && !data.lowest) {
+          card.innerHTML = `<h2>Meeting Extremes</h2><div class="empty-state">No meeting data available</div>`;
+          return;
+        }
+        
+        let html = `<h2>Meeting Extremes</h2>`;
+        
+        if (data.highest) {
+          html += `<div class="highlight-box warning">
+            <div class="title">Most Meetings</div>
+            <div class="value">${data.highest.label}</div>
+            <div class="detail">${data.highest.meeting_count} meeting${data.highest.meeting_count !== 1 ? 's' : ''}</div>
+          </div>`;
+        }
+        
+        if (data.lowest) {
+          html += `<div class="highlight-box success">
+            <div class="title">Fewest Meetings</div>
+            <div class="value">${data.lowest.label}</div>
+            <div class="detail">${data.lowest.meeting_count} meeting${data.lowest.meeting_count !== 1 ? 's' : ''}</div>
+          </div>`;
+        }
+        
+        card.innerHTML = html;
+      } catch (e) {
+        card.innerHTML = `<h2>Meeting Extremes</h2><div class="error">Failed to load data</div>`;
+      }
+    }
+
+    // Fetch and render Weekly Extremes
+    async function loadWeeklyExtremes() {
+      const card = document.getElementById('card-weekly-extremes');
+      try {
+        const res = await fetch('/api/audit/weekly-extremes/');
+        const data = await res.json();
+        
+        if (!data.busiest && !data.most_relaxed) {
+          card.innerHTML = `<h2>Busiest & Most Relaxed Week</h2><div class="empty-state">No meeting data available</div>`;
+          return;
+        }
+        
+        let html = `<h2>Busiest & Most Relaxed Week</h2>`;
+        
+        if (data.busiest) {
+          html += `<div class="highlight-box warning">
+            <div class="title">Busiest Week</div>
+            <div class="value">${formatWeekOfMonth(data.busiest.start_date)} <span class="tag ${data.busiest.classification}">${data.busiest.classification}</span></div>
+            <div class="detail">${formatDateUS(data.busiest.start_date)} to ${formatDateUS(data.busiest.end_date)} &bull; ${formatHours(data.busiest.total_hours)}</div>
+          </div>`;
+        }
+        
+        if (data.most_relaxed) {
+          html += `<div class="highlight-box success">
+            <div class="title">Most Relaxed Week</div>
+            <div class="value">${formatWeekOfMonth(data.most_relaxed.start_date)} <span class="tag ${data.most_relaxed.classification}">${data.most_relaxed.classification}</span></div>
+            <div class="detail">${formatDateUS(data.most_relaxed.start_date)} to ${formatDateUS(data.most_relaxed.end_date)} &bull; ${formatHours(data.most_relaxed.total_hours)}</div>
+          </div>`;
+        }
+        
+        card.innerHTML = html;
+      } catch (e) {
+        card.innerHTML = `<h2>Busiest & Most Relaxed Week</h2><div class="error">Failed to load data</div>`;
+      }
+    }
+
+    // Fetch and render Weekly Averages
+    async function loadWeeklyAverages() {
+      const card = document.getElementById('card-weekly-avg');
+      try {
+        const res = await fetch('/api/audit/weekly-averages/');
+        const data = await res.json();
+        
+        if (data.weeks_analyzed === 0) {
+          card.innerHTML = `<h2>Weekly Averages</h2><div class="empty-state">No meeting data available</div>`;
+          return;
+        }
+        
+        card.innerHTML = `<h2>Weekly Averages</h2>
+          <div class="stat-row">
+            <span class="stat-label">Weeks Analyzed</span>
+            <span class="stat-value">${data.weeks_analyzed}</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Avg Meetings / Week</span>
+            <span class="stat-value">${data.average_meetings_per_week}</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Avg Time / Week</span>
+            <span class="stat-value">${formatHours(data.average_hours_per_week)}</span>
+          </div>`;
+      } catch (e) {
+        card.innerHTML = `<h2>Weekly Averages</h2><div class="error">Failed to load data</div>`;
+      }
+    }
+
+    // Fetch and render Top Contacts
+    async function loadTopContacts() {
+      const card = document.getElementById('card-contacts');
+      try {
+        const res = await fetch('/api/audit/top-contacts/');
+        const data = await res.json();
+        
+        if (data.top_contacts.length === 0) {
+          card.innerHTML = `<h2>Top Meeting Contacts</h2><div class="empty-state">No contacts found</div>`;
+          return;
+        }
+        
+        let html = `<h2>Top Meeting Contacts</h2><table>
+          <thead><tr><th>Contact</th><th class="num">Meetings</th><th class="num">Hours</th></tr></thead><tbody>`;
+        
+        data.top_contacts.forEach(contact => {
+          // Show name if available, with email as subtitle
+          let contactDisplay;
+          if (contact.name) {
+            const name = contact.name.length > 22 ? contact.name.substring(0, 19) + '...' : contact.name;
+            const email = contact.email.length > 30 ? contact.email.substring(0, 27) + '...' : contact.email;
+            contactDisplay = `<strong>${name}</strong><br><small style="color:var(--text-muted)">${email}</small>`;
+          } else {
+            const email = contact.email.length > 28 ? contact.email.substring(0, 25) + '...' : contact.email;
+            contactDisplay = email;
+          }
+          html += `<tr>
+            <td title="${contact.name ? contact.name + ' - ' : ''}${contact.email}">${contactDisplay}</td>
+            <td class="num">${contact.meeting_count}</td>
+            <td class="num">${formatHours(contact.total_hours)}</td>
+          </tr>`;
+        });
+        
+        html += '</tbody></table>';
+        card.innerHTML = html;
+      } catch (e) {
+        card.innerHTML = `<h2>Top Meeting Contacts</h2><div class="error">Failed to load data</div>`;
+      }
+    }
+
+    // Fetch and render Interview Time
+    async function loadInterviewTime() {
+      const card = document.getElementById('card-interview');
+      try {
+        const res = await fetch('/api/audit/interview-time/');
+        const data = await res.json();
+        
+        if (data.total_meetings === 0) {
+          card.innerHTML = `<h2>Recruiting / Interview Time</h2>
+            <div class="empty-state">No interview meetings found<br>
+            <small style="opacity:0.7">Events with "interview", "candidate", "recruiting", etc.</small></div>`;
+          return;
+        }
+        
+        let html = `<h2>Recruiting / Interview Time</h2>
+          <div class="big-stat">
+            <div class="number">${formatHours(data.total_hours)}</div>
+            <div class="label">${data.total_meetings} interview meeting${data.total_meetings !== 1 ? 's' : ''}</div>
+          </div>`;
+        
+        if (data.matching_events.length > 0) {
+          html += `<table>
+            <thead><tr><th>Date</th><th>Event</th><th class="num">Min</th></tr></thead><tbody>`;
+          
+          data.matching_events.slice(0, 5).forEach(event => {
+            const summary = event.summary.length > 30 ? event.summary.substring(0, 27) + '...' : event.summary;
+            html += `<tr>
+              <td>${event.date}</td>
+              <td title="${event.summary}">${summary}</td>
+              <td class="num">${event.duration_minutes}</td>
+            </tr>`;
+          });
+          
+          if (data.matching_events.length > 5) {
+            html += `<tr><td colspan="3" style="text-align:center;color:var(--text-muted)">
+              +${data.matching_events.length - 5} more
+            </td></tr>`;
+          }
+          
+          html += '</tbody></table>';
+        }
+        
+        card.innerHTML = html;
+      } catch (e) {
+        card.innerHTML = `<h2>Recruiting / Interview Time</h2><div class="error">Failed to load data</div>`;
+      }
+    }
+
+    // Load all data on page load
+    document.addEventListener('DOMContentLoaded', () => {
+      loadMonthlyTime();
+      loadMeetingExtremes();
+      loadWeeklyExtremes();
+      loadWeeklyAverages();
+      loadTopContacts();
+      loadInterviewTime();
+    });
+  </script>
+</body>
+</html>

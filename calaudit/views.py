@@ -5,6 +5,8 @@ This module contains DRF API views for calendar audit metrics.
 Each view corresponds to a specific metric endpoint.
 """
 
+from django.shortcuts import render
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
@@ -17,6 +19,18 @@ from .queries import (
     get_weekly_averages,
     get_weekly_extremes,
 )
+
+
+def dashboard(request):
+    """
+    Render the audit dashboard page.
+    
+    This view serves the HTML template that displays all 6 audit metrics.
+    The template uses JavaScript to fetch data from the API endpoints.
+    
+    URL: /api/audit/
+    """
+    return render(request, "calaudit/dashboard.html")
 
 
 class MonthlyMeetingTimeView(APIView):
