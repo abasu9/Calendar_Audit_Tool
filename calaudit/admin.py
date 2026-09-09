@@ -1,3 +1,6 @@
-from django.contrib import admin
+"""Register calendar-audit models with Django's admin site.
 
-# Register your models here.
+This app currently has no audit-specific database models to register.
+"""
+
+from django.contrib import admin

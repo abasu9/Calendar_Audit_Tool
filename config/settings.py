@@ -1,22 +1,8 @@
-"""
-Django Settings for Calendar Audit Tool
+"""Configure Django, PostgreSQL, and Google Calendar integration.
 
-PURPOSE:
-Central configuration for the entire Django application. This file defines:
-- Database connection settings
-- Installed apps and middleware
-- Security settings (secret key, allowed hosts)
-- Google OAuth configuration
-- Timezone and localization settings
-
-HOW SETTINGS WORK:
-Django loads this file at startup. Other parts of the app access settings via:
-    from django.conf import settings
-    print(settings.DEBUG)
-
-ENVIRONMENT VARIABLES:
-Most sensitive settings come from environment variables (loaded from .env file).
-This keeps secrets out of source code. The python-dotenv library loads .env automatically.
+Django loads these values when the application starts. Local environment values
+come from ``.env`` so secrets and deployment-specific settings stay out of the
+source code.
 """
 
 import os
@@ -26,117 +12,82 @@ from dotenv import load_dotenv
 
 from config.database import database_config_from_env
 
-# =============================================================================
-# BASE DIRECTORY
-# =============================================================================
-# Path to the project root (the folder containing manage.py)
-# __file__ = this settings.py file
-# .parent = config/
-# .parent = project root
+# Project root containing ``manage.py``.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# Load environment variables from .env file in project root
-# This makes os.getenv() return values from .env
+# Add local ``.env`` values to the process environment.
 load_dotenv(BASE_DIR / ".env")
 
 
-# =============================================================================
-# HELPER FUNCTIONS FOR PARSING ENVIRONMENT VARIABLES
-# =============================================================================
-
 def env_bool(name, default=False):
-    """
-    Parse a boolean from an environment variable.
-    
-    Treats these as True: "1", "true", "yes", "on" (case insensitive)
-    Everything else is False.
-    
-    EXAMPLE:
-        DEBUG=true  -> True
-        DEBUG=0     -> False
-        DEBUG=      -> False (uses default)
+    """Read one environment value as a boolean.
+
+    Values such as ``1``, ``true``, ``yes``, and ``on`` become true after the
+    text is normalized; all other values become false.
     """
     return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def env_list(name, default=""):
-    """
-    Parse a comma-separated list from an environment variable.
-    
-    EXAMPLE:
-        ALLOWED_HOSTS=localhost,127.0.0.1  -> ["localhost", "127.0.0.1"]
-        ALLOWED_HOSTS=                      -> []
+    """Read a comma-separated environment value as a clean list.
+
+    Each item is trimmed and empty items are removed before the list is returned.
     """
     return [item.strip() for item in os.getenv(name, default).split(",") if item.strip()]
 
 
-# =============================================================================
-# SECURITY SETTINGS
-# =============================================================================
-
-# Secret key for cryptographic signing (sessions, CSRF tokens, etc.)
-# IMPORTANT: Change this in production! Generate with: python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
+# Django uses this value to sign sessions and security tokens.
 SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-dev-only-change-me")
 
-# Debug mode: shows detailed error pages, disables some security features
-# NEVER enable in production!
+# Detailed error pages are intended only for development.
 DEBUG = env_bool("DEBUG", True)
 
-# Hostnames that Django will serve requests for
-# Prevents HTTP Host header attacks
+# Only accept requests addressed to a known hostname.
 ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", "localhost,127.0.0.1")
 
-# Local webhook tunnels (ngrok) change hostnames on every restart.
-# Leading-dot entries match any subdomain of that host.
+# In development, accept changing ngrok subdomains used by the webhook tunnel.
 if DEBUG:
     for _ngrok_host in (".ngrok-free.dev", ".ngrok-free.app", ".ngrok.io"):
         if _ngrok_host not in ALLOWED_HOSTS:
             ALLOWED_HOSTS.append(_ngrok_host)
 
-# Origins that can make cross-site requests (needed for webhooks in Phase 2)
-# Google sends push notifications to an HTTPS tunnel hostname
+# Allow configured HTTPS tunnel origins to submit trusted requests.
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
 
 
-# =============================================================================
-# APPLICATION DEFINITION
-# =============================================================================
-
 INSTALLED_APPS = [
-    # Django built-in apps
-    "django.contrib.admin",          # Admin interface
-    "django.contrib.auth",           # User authentication
-    "django.contrib.contenttypes",   # Content type framework
-    "django.contrib.sessions",       # Session handling (stores OAuth state)
-    "django.contrib.messages",       # Flash messages
-    "django.contrib.staticfiles",    # Static file serving
-    
-    # Third-party apps
-    "rest_framework",                # Django REST Framework for APIs
-    
-    # Our apps
-    "googlecal",  # Google OAuth and Calendar API integration (Phase 1)
-    "calsync",    # Calendar sync engine with push notifications (Phase 2)
-    "calaudit",   # Audit report generation and API (Phase 3)
+    # Django framework features.
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    # REST API support.
+    "rest_framework",
+    # Project applications.
+    "googlecal",
+    "calsync",
+    "calaudit",
 ]
 
 MIDDLEWARE = [
-    "django.middleware.security.SecurityMiddleware",      # Security headers
-    "django.contrib.sessions.middleware.SessionMiddleware",  # Session handling
-    "django.middleware.common.CommonMiddleware",          # URL rewriting, etc.
-    "django.middleware.csrf.CsrfViewMiddleware",          # CSRF protection
-    "django.contrib.auth.middleware.AuthenticationMiddleware",  # User auth
-    "django.contrib.messages.middleware.MessageMiddleware",     # Flash messages
-    "django.middleware.clickjacking.XFrameOptionsMiddleware",   # Clickjacking protection
+    "django.middleware.security.SecurityMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-ROOT_URLCONF = "config.urls"  # Main URL configuration module
+ROOT_URLCONF = "config.urls"
 
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [BASE_DIR / "templates"],  # Project-level templates
-        "APP_DIRS": True,  # Also look in app_name/templates/
+        "DIRS": [BASE_DIR / "templates"],
+        "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
                 "django.template.context_processors.request",
@@ -147,20 +98,13 @@ TEMPLATES = [
     },
 ]
 
-WSGI_APPLICATION = "config.wsgi.application"  # For traditional web servers
-ASGI_APPLICATION = "config.asgi.application"  # For async servers
+WSGI_APPLICATION = "config.wsgi.application"
+ASGI_APPLICATION = "config.asgi.application"
 
 
-# =============================================================================
-# DATABASE CONFIGURATION
-# =============================================================================
-
+# Build the default connection from ``DATABASE_URL`` or ``POSTGRES_*`` values.
 DATABASES = {"default": database_config_from_env()}
 
-
-# =============================================================================
-# PASSWORD VALIDATION (for Django's auth system)
-# =============================================================================
 
 AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
@@ -169,89 +113,55 @@ AUTH_PASSWORD_VALIDATORS = [
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
 ]
 
-# Default primary key type for models
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 
-# =============================================================================
-# INTERNATIONALIZATION
-# =============================================================================
-
 LANGUAGE_CODE = "en-us"
-TIME_ZONE = "UTC"  # Store all times in UTC in the database
-USE_I18N = True    # Enable translation system
-USE_TZ = True      # Use timezone-aware datetimes
+TIME_ZONE = "UTC"
+USE_I18N = True
+USE_TZ = True
 
-# Timezone for DISPLAY in reports and UI
-# Calendar data is stored in UTC; this only affects presentation
+# Store timestamps in UTC, then display reports in this timezone.
 REPORT_TIME_ZONE = os.getenv("REPORT_TIME_ZONE", "America/Chicago")
 
-
-# =============================================================================
-# STATIC FILES (CSS, JavaScript, Images)
-# =============================================================================
 
 STATIC_URL = "static/"
 
 
-# =============================================================================
-# GOOGLE CALENDAR INTEGRATION
-# =============================================================================
-
 def project_path(name, default):
-    """
-    Resolve a path from an environment variable, treating relative paths
-    as relative to the project root.
-    
-    EXAMPLE:
-        GOOGLE_CREDENTIALS_FILE=credentials.json -> /path/to/project/credentials.json
-        GOOGLE_CREDENTIALS_FILE=/etc/creds.json  -> /etc/creds.json
+    """Return an absolute path for a file setting.
+
+    The environment value is used when present, and relative values are resolved
+    from the project root so commands work from any current directory.
     """
     return (BASE_DIR / os.getenv(name, default)).resolve()
 
 
-# Path to the OAuth client JSON downloaded from Google Cloud Console
+# OAuth client configuration downloaded from Google Cloud.
 GOOGLE_CREDENTIALS_FILE = project_path("GOOGLE_CREDENTIALS_FILE", "credentials.json")
 
-# Path where we store the user's access/refresh tokens after authorization
+# User access and refresh tokens saved after authorization.
 GOOGLE_TOKEN_FILE = project_path("GOOGLE_TOKEN_FILE", "token.json")
 
-# OAuth scopes (permissions) we request from the user
-# - openid: Get the user's Google ID
-# - userinfo.email: Get the user's email address
-# - calendar.readonly: Read calendar events (also allows setting up push notifications)
+# Request identity details plus read-only calendar access.
 GOOGLE_OAUTH_SCOPES = [
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/calendar.readonly",
 ]
 
-# The callback URL Google redirects to after user authorizes
-# MUST be registered in Google Cloud Console under "Authorized redirect URIs"
-# MUST match exactly, including trailing slash
+# This must exactly match an authorized redirect URI in Google Cloud.
 GOOGLE_OAUTH_REDIRECT_URI = os.getenv(
     "GOOGLE_OAUTH_REDIRECT_URI", "http://localhost:8000/oauth2/callback/"
 )
 
-# =============================================================================
-# OAUTHLIB WORKAROUNDS
-# =============================================================================
-
 if DEBUG and GOOGLE_OAUTH_REDIRECT_URI.startswith("http://"):
-    # By default, oauthlib requires HTTPS for OAuth callbacks (security best practice)
-    # But Google allows http://localhost for development
-    # This env var tells oauthlib to allow insecure transport in debug mode
+    # Google permits an HTTP callback only for local development.
     os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
 
-# Google returns scopes in a different order than we requested, and sometimes
-# adds aliases (like "openid" -> "openid email profile"). oauthlib treats this
-# as a scope-change attack and raises an error. This env var relaxes that check.
+# Accept Google's equivalent identity-scope names and ordering.
 os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
-
-# =============================================================================
-# LOGGING
-# =============================================================================
 
 LOGGING = {
     "version": 1,

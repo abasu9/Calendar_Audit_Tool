@@ -1,13 +1,8 @@
-"""
-Test cases for the googlecal app.
+"""Verify Google Calendar routes, dashboard behavior, OAuth, and credentials.
 
-Tests cover:
-1. URL routing
-2. Dashboard view (basic rendering)
-3. OAuth flow views (redirects)
-
-Note: These tests don't require actual Google API access.
-Tests that would require Google OAuth are skipped or mocked.
+External Google calls are replaced with mocks or temporary files. This keeps tests
+repeatable while checking redirects, rendered states, token loading, and refresh
+behavior.
 """
 
 from unittest.mock import patch, MagicMock

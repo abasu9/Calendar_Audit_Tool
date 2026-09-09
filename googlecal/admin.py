@@ -1,3 +1,6 @@
-from django.contrib import admin
+"""Register Google Calendar models with Django's admin site.
 
-# Register your models here.
+This app handles API access and does not own database models.
+"""
+
+from django.contrib import admin

@@ -1,4 +1,9 @@
-"""Database configuration helpers for local PostgreSQL and Supabase."""
+"""Build Django database settings from environment variables.
+
+The project accepts either one PostgreSQL URL, such as a Supabase connection
+string, or separate local PostgreSQL values. Connection options are normalized
+before Django opens the database.
+"""
 
 import os
 from urllib.parse import parse_qsl, unquote, urlsplit
@@ -24,11 +29,21 @@ SUPPORTED_POSTGRES_OPTIONS = {
 
 
 def _env_bool(environ, name, default=False):
+    """Read one environment value as a boolean.
+
+    Common true values are accepted without regard to letter case; missing or
+    different values use the supplied default or evaluate to false.
+    """
     value = environ.get(name, str(default))
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _env_int(environ, name, default):
+    """Read one environment value as an integer.
+
+    The value is converted with ``int`` and a Django configuration error is
+    raised when it cannot be converted.
+    """
     value = environ.get(name, str(default))
     try:
         return int(value)
@@ -37,12 +52,11 @@ def _env_int(environ, name, default):
 
 
 def database_config_from_env(environ=None):
-    """Build Django's PostgreSQL configuration from environment variables.
+    """Return Django settings for the configured PostgreSQL database.
 
-    ``DATABASE_URL`` takes precedence over the discrete ``POSTGRES_*`` values.
-    Supabase transaction-pooler URLs (port 6543) automatically disable prepared
-    statements and server-side cursors, which are incompatible with transaction
-    pooling.
+    A ``DATABASE_URL`` is parsed first; otherwise the separate ``POSTGRES_*``
+    values are used. Remote connections default to SSL, and port 6543 enables
+    options that are safe for Supabase transaction pooling.
     """
     environ = os.environ if environ is None else environ
     database_url = environ.get("DATABASE_URL", "").strip()
@@ -83,8 +97,7 @@ def database_config_from_env(environ=None):
         if key in SUPPORTED_POSTGRES_OPTIONS
     }
 
-    # Supabase recommends SSL. Preserve an explicit URL/DB_SSLMODE choice and
-    # otherwise require encryption for any non-local DATABASE_URL.
+    # Use an explicit SSL choice, or protect remote connections by default.
     sslmode = environ.get("DB_SSLMODE")
     if sslmode:
         options["sslmode"] = sslmode
@@ -99,7 +112,7 @@ def database_config_from_env(environ=None):
 
     is_transaction_pooler = port == 6543
     if is_transaction_pooler:
-        # Supavisor/PgBouncer transaction mode cannot retain session state.
+        # Transaction poolers cannot keep prepared statements between requests.
         options["prepare_threshold"] = None
 
     config = {

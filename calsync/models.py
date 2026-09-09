@@ -1,20 +1,8 @@
-"""
-Calendar Sync Models
+"""Store synchronized events, sync progress, and webhook subscriptions.
 
-PURPOSE:
-Database models for storing calendar events and managing sync state.
-These enable incremental synchronization with Google Calendar.
-
-MODELS:
-- CalendarEvent: Individual calendar events fetched from Google
-- SyncState: Tracks the syncToken for incremental fetches
-- WatchChannel: Tracks active push notification subscriptions
-
-HOW INCREMENTAL SYNC WORKS:
-1. First sync: Fetch all events, Google returns a syncToken
-2. Store the syncToken in SyncState
-3. Next sync: Pass the syncToken, Google only returns changes since then
-4. If syncToken expires (410 Gone), do a full sync again
+``CalendarEvent`` supplies local data for reports, ``SyncState`` remembers where
+incremental syncing stopped, and ``WatchChannel`` records the subscriptions that
+allow Google to notify the application about changes.
 """
 
 import uuid
@@ -24,40 +12,27 @@ from django.utils import timezone
 
 
 class CalendarEvent(models.Model):
+    """Represent one Google Calendar event in the local database.
+
+    Local records make audit queries fast and reduce repeated API calls. Google's
+    event ID is the primary key so later syncs can update the same row. All-day
+    dates are stored at midnight UTC and marked with ``all_day``.
     """
-    A single calendar event fetched from Google Calendar.
-    
-    WHY STORE EVENTS LOCALLY?
-    - Faster queries for audit reports (no API calls)
-    - Can analyze historical data even if events are deleted from Google
-    - Reduces API quota usage
-    
-    GOOGLE EVENT ID:
-    Google's event IDs are stable and unique per calendar. We use them as
-    our primary key to enable upsert operations (create or update).
-    
-    ALL-DAY VS TIMED EVENTS:
-    - Timed events have start_time and end_time as datetimes
-    - All-day events have them as dates (stored as midnight UTC)
-    - The all_day flag distinguishes them
-    """
-    
-    # Primary key: Google's event ID (stable, unique per calendar)
+
+    # Stable Google ID used to insert or update the same event.
     google_event_id = models.CharField(
         max_length=1024,
         primary_key=True,
         help_text="Google's unique event identifier"
     )
     
-    # Which calendar this event belongs to
-    # Usually "primary" but could be a specific calendar email
+    # Calendar that owns this event, normally ``primary``.
     calendar_id = models.CharField(
         max_length=255,
         db_index=True,
         help_text="Calendar ID (usually 'primary')"
     )
     
-    # Event details
     summary = models.CharField(
         max_length=1024,
         blank=True,
@@ -65,8 +40,7 @@ class CalendarEvent(models.Model):
         help_text="Event title/summary"
     )
     
-    # Start and end times
-    # For all-day events, these are dates stored as midnight UTC
+    # Timed values use UTC; all-day dates use midnight UTC.
     start_time = models.DateTimeField(
         db_index=True,
         help_text="Event start time (UTC)"
@@ -75,19 +49,17 @@ class CalendarEvent(models.Model):
         help_text="Event end time (UTC)"
     )
     
-    # Flag for all-day events (which have date instead of dateTime)
     all_day = models.BooleanField(
         default=False,
         help_text="True if this is an all-day event"
     )
     
-    # Computed duration in minutes (0 for all-day events in metrics)
+    # Reports treat all-day events as zero meeting minutes.
     duration_minutes = models.IntegerField(
         default=0,
         help_text="Duration in minutes (computed from start/end)"
     )
     
-    # Meeting metadata
     attendee_count = models.IntegerField(
         default=0,
         help_text="Number of attendees"
@@ -99,8 +71,7 @@ class CalendarEvent(models.Model):
         help_text="Organizer's email address"
     )
     
-    # Event status from Google
-    # Values: "confirmed", "tentative", "cancelled"
+    # Google reports confirmed, tentative, or cancelled status.
     status = models.CharField(
         max_length=50,
         default="confirmed",
@@ -108,14 +79,12 @@ class CalendarEvent(models.Model):
         help_text="Event status (confirmed/tentative/cancelled)"
     )
     
-    # Store the full Google response for future use
-    # This lets us extract additional fields later without re-syncing
+    # Preserve fields that are not yet represented as model columns.
     raw_json = models.JSONField(
         default=dict,
         help_text="Full event data from Google API"
     )
     
-    # Timestamps for our records
     created_at = models.DateTimeField(
         auto_now_add=True,
         help_text="When we first synced this event"
@@ -126,59 +95,41 @@ class CalendarEvent(models.Model):
     )
     
     class Meta:
+        """Keep recent events first and index common report filters."""
+
         ordering = ["-start_time"]
         indexes = [
-            # For querying events in a time range
             models.Index(fields=["calendar_id", "start_time"]),
-            # For finding events by status
             models.Index(fields=["calendar_id", "status"]),
         ]
-    
+
     def __str__(self):
+        """Return a readable date and title for logs and admin pages."""
+
         return f"{self.start_time.date()} - {self.summary or '(no title)'}"
-    
+
     @classmethod
     def from_google_event(cls, event: dict, calendar_id: str) -> "CalendarEvent":
-        """
-        Create or update a CalendarEvent from a Google API response.
-        
-        PARAMETERS:
-        - event: Dict from Google's events.list() response
-        - calendar_id: Which calendar this came from
-        
-        RETURNS:
-        - CalendarEvent instance (not yet saved)
-        
-        GOOGLE EVENT STRUCTURE:
-        {
-            "id": "abc123",
-            "summary": "Team Meeting",
-            "start": {"dateTime": "2024-01-01T09:00:00-06:00"} or {"date": "2024-01-01"},
-            "end": {"dateTime": "2024-01-01T10:00:00-06:00"} or {"date": "2024-01-02"},
-            "status": "confirmed",
-            "attendees": [...],
-            "organizer": {"email": "..."},
-            ...
-        }
+        """Build an unsaved model instance from one Google event.
+
+        The method accepts Google's timed or all-day format, converts values to
+        UTC, calculates timed duration, and copies attendee and organizer details
+        into the model fields.
         """
         from datetime import datetime
         from zoneinfo import ZoneInfo
         
-        # Parse start time
         start_data = event.get("start", {})
         if "dateTime" in start_data:
-            # Timed event
             start_time = datetime.fromisoformat(start_data["dateTime"])
             all_day = False
         else:
-            # All-day event: "date" is like "2024-01-01"
             date_str = start_data.get("date", "")
             start_time = datetime.strptime(date_str, "%Y-%m-%d").replace(
                 tzinfo=ZoneInfo("UTC")
             )
             all_day = True
         
-        # Parse end time
         end_data = event.get("end", {})
         if "dateTime" in end_data:
             end_time = datetime.fromisoformat(end_data["dateTime"])
@@ -188,23 +139,20 @@ class CalendarEvent(models.Model):
                 tzinfo=ZoneInfo("UTC")
             )
         
-        # Ensure times are UTC
+        # Normalize timestamps so report queries compare one timezone.
         if start_time.tzinfo is not None:
             start_time = start_time.astimezone(ZoneInfo("UTC"))
         if end_time.tzinfo is not None:
             end_time = end_time.astimezone(ZoneInfo("UTC"))
         
-        # Calculate duration (0 for all-day events)
         if all_day:
             duration_minutes = 0
         else:
             duration_minutes = int((end_time - start_time).total_seconds() // 60)
         
-        # Extract attendees
         attendees = event.get("attendees") or []
         attendee_count = len(attendees)
         
-        # Extract organizer
         organizer = event.get("organizer") or {}
         organizer_email = organizer.get("email", "")
         
@@ -224,24 +172,15 @@ class CalendarEvent(models.Model):
     
     @classmethod
     def parse_google_event(cls, event: dict, calendar_id: str) -> dict:
-        """
-        Parse a Google Calendar event into a dict of field values.
-        
-        Unlike from_google_event(), this returns a dict suitable for
-        update_or_create(defaults=...), which properly handles
-        auto_now_add fields like created_at.
-        
-        PARAMETERS:
-        - event: Dict from Google's events.list() response
-        - calendar_id: Which calendar this came from
-        
-        RETURNS:
-        - Dict of field names to values (excludes google_event_id)
+        """Convert one Google event into values for ``update_or_create``.
+
+        It performs the same time and metadata conversion as
+        ``from_google_event`` but excludes the primary key. Django can therefore
+        update an existing row without changing its original creation time.
         """
         from datetime import datetime
         from zoneinfo import ZoneInfo
         
-        # Parse start time
         start_data = event.get("start", {})
         if "dateTime" in start_data:
             start_time = datetime.fromisoformat(start_data["dateTime"])
@@ -253,7 +192,6 @@ class CalendarEvent(models.Model):
             )
             all_day = True
         
-        # Parse end time
         end_data = event.get("end", {})
         if "dateTime" in end_data:
             end_time = datetime.fromisoformat(end_data["dateTime"])
@@ -263,27 +201,23 @@ class CalendarEvent(models.Model):
                 tzinfo=ZoneInfo("UTC")
             )
         
-        # Ensure times are UTC
+        # Normalize timestamps so report queries compare one timezone.
         if start_time.tzinfo is not None:
             start_time = start_time.astimezone(ZoneInfo("UTC"))
         if end_time.tzinfo is not None:
             end_time = end_time.astimezone(ZoneInfo("UTC"))
         
-        # Calculate duration (0 for all-day events)
         if all_day:
             duration_minutes = 0
         else:
             duration_minutes = int((end_time - start_time).total_seconds() // 60)
         
-        # Extract attendees
         attendees = event.get("attendees") or []
         attendee_count = len(attendees)
         
-        # Extract organizer
         organizer = event.get("organizer") or {}
         organizer_email = organizer.get("email", "")
         
-        # Return dict of defaults (excludes primary key)
         return {
             "calendar_id": calendar_id,
             "summary": event.get("summary", ""),
@@ -299,32 +233,19 @@ class CalendarEvent(models.Model):
 
 
 class SyncState(models.Model):
+    """Remember incremental sync progress for one calendar.
+
+    Google returns a sync token after listing events. Saving it lets the next
+    request fetch only changes. If Google expires the token, the sync engine
+    creates a fresh state through a full sync.
     """
-    Tracks the sync state for incremental synchronization.
-    
-    WHAT IS A SYNC TOKEN?
-    When you call events.list() on Google Calendar, the response includes
-    a "nextSyncToken". On subsequent calls, pass this token and Google
-    only returns events that changed since then.
-    
-    WHY TRACK THIS?
-    - Dramatically reduces API calls and data transfer
-    - Enables near-instant updates when combined with push notifications
-    - Required for "instantaneous" sync requirement
-    
-    TOKEN EXPIRATION:
-    Sync tokens can expire (Google returns 410 Gone). When this happens,
-    we do a full sync to re-establish the baseline.
-    """
-    
-    # Which calendar this sync state is for
+
     calendar_id = models.CharField(
         max_length=255,
         primary_key=True,
         help_text="Calendar ID (usually 'primary')"
     )
     
-    # Google's sync token for incremental fetches
     sync_token = models.CharField(
         max_length=1024,
         blank=True,
@@ -332,51 +253,39 @@ class SyncState(models.Model):
         help_text="Google's syncToken for incremental sync"
     )
     
-    # When we last did a full sync (fetched everything)
     last_full_sync = models.DateTimeField(
         null=True,
         blank=True,
         help_text="When we last did a complete sync"
     )
     
-    # When we last synced (full or incremental)
     last_sync = models.DateTimeField(
         auto_now=True,
         help_text="When we last synced (any type)"
     )
     
     def __str__(self):
+        """Return the calendar ID represented by this state."""
+
         return f"SyncState({self.calendar_id})"
 
 
 class WatchChannel(models.Model):
+    """Represent one Google push-notification subscription.
+
+    The record joins the channel ID sent in each webhook to Google's resource ID,
+    the watched calendar, and a secret verification token. Expiration and active
+    fields show whether the subscription should still be trusted.
     """
-    Tracks active push notification subscriptions (watch channels).
-    
-    HOW PUSH NOTIFICATIONS WORK:
-    1. We call events.watch() with our webhook URL
-    2. Google returns a channel_id and resource_id
-    3. When events change, Google POSTs to our webhook with these IDs
-    4. We verify the request and trigger an incremental sync
-    
-    CHANNEL EXPIRATION:
-    Channels expire (default ~1 week). We need to renew them before expiry.
-    Google doesn't auto-renew - we must create a new channel.
-    
-    SECURITY:
-    We generate a random token and include it in the watch request.
-    Google echoes it back in notifications. We verify it matches to
-    prevent spoofed notifications.
-    """
-    
-    # Our UUID for this channel (sent to Google, echoed back in notifications)
+
+    # Application-generated ID that Google returns in each notification.
     channel_id = models.UUIDField(
         primary_key=True,
         default=uuid.uuid4,
         help_text="Our UUID for this watch channel"
     )
     
-    # Google's resource ID (returned by watch, needed to stop the channel)
+    # Google-generated ID required when stopping the subscription.
     resource_id = models.CharField(
         max_length=255,
         blank=True,
@@ -384,50 +293,50 @@ class WatchChannel(models.Model):
         help_text="Google's resource ID for this channel"
     )
     
-    # Which calendar we're watching
     calendar_id = models.CharField(
         max_length=255,
         db_index=True,
         help_text="Calendar ID being watched"
     )
     
-    # Where notifications are sent
     webhook_url = models.URLField(
         help_text="Webhook URL for notifications"
     )
     
-    # Secret token for verification (we generate, Google echoes back)
+    # Shared secret echoed by Google and checked with constant-time comparison.
     token = models.CharField(
         max_length=256,
         help_text="Secret token to verify notifications"
     )
     
-    # When this channel expires
     expiration = models.DateTimeField(
         help_text="When this channel expires"
     )
     
-    # Whether we're actively using this channel
     active = models.BooleanField(
         default=True,
         db_index=True,
         help_text="Whether this channel is active"
     )
     
-    # Timestamps
     created_at = models.DateTimeField(
         auto_now_add=True,
         help_text="When we created this channel"
     )
     
     class Meta:
+        """Show newly created subscriptions first."""
+
         ordering = ["-created_at"]
-    
+
     def __str__(self):
+        """Return the watched calendar and current local state."""
+
         status = "active" if self.active else "inactive"
         return f"WatchChannel({self.calendar_id}, {status})"
-    
+
     @property
     def is_expired(self) -> bool:
-        """Check if this channel has expired."""
+        """Return whether the saved expiration time has passed."""
+
         return timezone.now() >= self.expiration

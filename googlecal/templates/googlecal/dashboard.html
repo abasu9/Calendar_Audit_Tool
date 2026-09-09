@@ -1,4 +1,9 @@
 <!DOCTYPE html>
+<!--
+  Purpose: Show Google connection status, upcoming events, and dashboard actions.
+  How it works: Django fills the server-side values, then JavaScript submits manual
+  sync requests without reloading the page.
+-->
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -232,6 +237,8 @@
     const syncForm = document.getElementById('sync-form');
 
     if (syncForm) {
+      // Request a manual sync and display its result beside the button.
+      // The handler sends Django's CSRF token, then restores the button in all cases.
       syncForm.addEventListener('submit', async (event) => {
         event.preventDefault();
         const button = document.getElementById('sync-button');

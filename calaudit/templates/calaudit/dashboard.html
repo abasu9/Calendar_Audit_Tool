@@ -1,4 +1,9 @@
 <!DOCTYPE html>
+<!--
+  Purpose: Display the six calendar-audit metrics and the backup sync action.
+  How it works: JavaScript loads each JSON endpoint into its card and refreshes all
+  cards after a successful manual synchronization.
+-->
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -254,37 +259,37 @@
     </header>
 
     <div class="grid">
-      <!-- Metric 1: Monthly Meeting Time -->
+      <!-- Monthly meeting-time results are inserted into this card. -->
       <div class="card" id="card-monthly">
         <h2>Monthly Meeting Time</h2>
         <div class="loading">Loading...</div>
       </div>
 
-      <!-- Metric 2: Meeting Extremes -->
+      <!-- Highest and lowest monthly meeting counts are inserted here. -->
       <div class="card" id="card-extremes">
         <h2>Meeting Extremes</h2>
         <div class="loading">Loading...</div>
       </div>
 
-      <!-- Metric 3: Weekly Extremes -->
+      <!-- Busiest and most relaxed weekly results are inserted here. -->
       <div class="card" id="card-weekly-extremes">
         <h2>Busiest & Most Relaxed Week</h2>
         <div class="loading">Loading...</div>
       </div>
 
-      <!-- Metric 4: Weekly Averages -->
+      <!-- Average weekly meeting values are inserted here. -->
       <div class="card" id="card-weekly-avg">
         <h2>Weekly Averages</h2>
         <div class="loading">Loading...</div>
       </div>
 
-      <!-- Metric 5: Top Contacts -->
+      <!-- Ranked meeting contacts are inserted here. -->
       <div class="card" id="card-contacts">
         <h2>Top Meeting Contacts</h2>
         <div class="loading">Loading...</div>
       </div>
 
-      <!-- Metric 6: Interview Time -->
+      <!-- Recruiting-related meeting totals are inserted here. -->
       <div class="card" id="card-interview">
         <h2>Recruiting / Interview Time</h2>
         <div class="loading">Loading...</div>
@@ -293,27 +298,31 @@
   </div>
 
   <script>
-    // Helper to format hours nicely
+    // Turn decimal hours into a short hours-or-minutes label.
+    // Values below one hour are easier to read as whole minutes.
     function formatHours(hours) {
       if (hours === 0) return '0 hrs';
       if (hours < 1) return `${Math.round(hours * 60)} min`;
       return `${hours.toFixed(1)} hrs`;
     }
 
-    // Helper to format date in US format (MM/DD/YYYY)
+    // Convert an API YYYY-MM-DD date into the dashboard's US date format.
+    // Splitting the text avoids browser timezone changes.
     function formatDateUS(dateStr) {
       const [year, month, day] = dateStr.split('-');
       return `${month}/${day}/${year}`;
     }
 
-    // Helper to get ordinal suffix (1st, 2nd, 3rd, 4th, etc.)
+    // Add the correct English ordinal ending to a number.
+    // The last two digits handle special values such as 11th and 12th.
     function getOrdinal(n) {
       const s = ['th', 'st', 'nd', 'rd'];
       const v = n % 100;
       return n + (s[(v - 20) % 10] || s[v] || s[0]);
     }
 
-    // Helper to format week as "3rd week of June 2026"
+    // Describe a week by its position inside the month.
+    // The start date selects a month and its day selects the week number.
     function formatWeekOfMonth(startDate) {
       const date = new Date(startDate + 'T00:00:00');
       const dayOfMonth = date.getDate();
@@ -327,7 +336,8 @@
       return `${getOrdinal(weekOfMonth)} week of ${monthName} ${year}`;
     }
 
-    // Fetch and render Monthly Meeting Time
+    // Load monthly meeting totals into the first metric card.
+    // Empty and failed responses replace the loading state with a clear message.
     async function loadMonthlyTime() {
       const card = document.getElementById('card-monthly');
       try {
@@ -353,7 +363,8 @@
       }
     }
 
-    // Fetch and render Meeting Extremes
+    // Load the highest and lowest monthly meeting counts.
+    // Each available extreme becomes a highlighted summary block.
     async function loadMeetingExtremes() {
       const card = document.getElementById('card-extremes');
       try {
@@ -389,7 +400,8 @@
       }
     }
 
-    // Fetch and render Weekly Extremes
+    // Load the busiest and most relaxed weekly totals.
+    // Dates, hours, and classifications are formatted before rendering.
     async function loadWeeklyExtremes() {
       const card = document.getElementById('card-weekly-extremes');
       try {
@@ -425,7 +437,8 @@
       }
     }
 
-    // Fetch and render Weekly Averages
+    // Load average meeting count and time for active weeks.
+    // The card shows a compact empty state when no weeks were analyzed.
     async function loadWeeklyAverages() {
       const card = document.getElementById('card-weekly-avg');
       try {
@@ -455,7 +468,8 @@
       }
     }
 
-    // Fetch and render Top Contacts
+    // Load and render the most frequent meeting contacts.
+    // Long names and emails are shortened visually while the full value stays in a title.
     async function loadTopContacts() {
       const card = document.getElementById('card-contacts');
       try {
@@ -471,7 +485,7 @@
           <thead><tr><th>Contact</th><th class="num">Meetings</th><th class="num">Hours</th></tr></thead><tbody>`;
         
         data.top_contacts.forEach(contact => {
-          // Show name if available, with email as subtitle
+          // Prefer a saved display name and keep the email as supporting text.
           let contactDisplay;
           if (contact.name) {
             const name = contact.name.length > 22 ? contact.name.substring(0, 19) + '...' : contact.name;
@@ -495,7 +509,8 @@
       }
     }
 
-    // Fetch and render Interview Time
+    // Load recruiting-related totals and a short matching-event list.
+    // Only the first five meetings are shown, with a count for any remaining rows.
     async function loadInterviewTime() {
       const card = document.getElementById('card-interview');
       try {
@@ -552,6 +567,8 @@
       loadInterviewTime,
     ];
 
+    // Request a backup sync and reload every metric after success.
+    // CSRF protects the POST, and the button is restored even after an error.
     async function syncCalendar(event) {
       event.preventDefault();
       const form = event.currentTarget;
@@ -590,7 +607,7 @@
       }
     }
 
-    // Load all data on page load
+    // Start metric requests and connect the sync form once the HTML is ready.
     document.addEventListener('DOMContentLoaded', () => {
       metricLoaders.forEach(load => load());
       document.getElementById('sync-form').addEventListener('submit', syncCalendar);

@@ -1,9 +1,7 @@
-"""
-Test cases for the calaudit app.
+"""Verify audit calculations and their REST endpoints.
 
-Tests cover:
-1. Query functions (get_monthly_meeting_time)
-2. API endpoints (MonthlyMeetingTimeView)
+Each group creates small calendar datasets, calls a query or view, and checks the
+returned totals, filtering rules, parameter limits, and empty-data behavior.
 """
 
 from datetime import datetime, timedelta

@@ -1,12 +1,8 @@
-"""
-Test cases for the calsync app.
+"""Verify sync models plus the manual and webhook HTTP endpoints.
 
-Tests cover:
-1. CalendarEvent model and parsing methods
-2. SyncState model
-3. WatchChannel model
-4. Manual sync endpoint
-5. Webhook endpoint
+Tests create isolated database records and mock synchronization where external
+Google access would otherwise be required. Assertions cover parsing, saved state,
+request security, notification validation, and response data.
 """
 
 import uuid
@@ -271,24 +267,32 @@ class SyncStateModelTests(TestCase):
 
 
 class ManualSyncViewTests(TestCase):
-    """Tests for the user-requested dashboard sync endpoint."""
+    """Verify the dashboard's backup synchronization endpoint."""
 
     def setUp(self):
+        """Create a CSRF-checking client and resolve the sync URL."""
+
         self.client = Client(enforce_csrf_checks=True)
         self.url = reverse("manual-sync")
 
     def test_post_required(self):
+        """Verify that a GET request cannot start synchronization."""
+
         response = self.client.get(self.url)
 
         self.assertEqual(response.status_code, 405)
 
     def test_csrf_protection_is_enabled(self):
+        """Verify that browser sync requests require a valid CSRF token."""
+
         response = self.client.post(self.url)
 
         self.assertEqual(response.status_code, 403)
 
     @patch("calsync.views.incremental_sync")
     def test_successful_sync_returns_counts(self, mock_sync):
+        """Verify that a successful sync returns its type and row counts."""
+
         mock_sync.return_value = SyncResult(
             success=True,
             full_sync=False,
@@ -315,6 +319,8 @@ class ManualSyncViewTests(TestCase):
 
     @patch("calsync.views.incremental_sync")
     def test_failed_sync_returns_error(self, mock_sync):
+        """Verify that a failed sync returns its message with HTTP 502."""
+
         mock_sync.return_value = SyncResult(
             success=False,
             full_sync=False,

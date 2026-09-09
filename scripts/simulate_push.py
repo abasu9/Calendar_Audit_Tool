@@ -1,36 +1,9 @@
 #!/usr/bin/env python
-"""
-Mock Push Notification Simulator
+"""Simulate a Google Calendar push notification during local development.
 
-PURPOSE:
-Simulate Google Calendar push notifications for local testing.
-Use this instead of setting up ngrok/tunnel for development.
-
-HOW IT WORKS:
-1. Sends a POST request to your local webhook endpoint
-2. Includes the same headers Google would send
-3. Triggers an incremental sync just like a real notification would
-
-USAGE:
-    # First, do an initial sync to populate the database
-    python manage.py sync_calendar --full
-    
-    # Then create a mock watch channel (for token verification)
-    # Option A: Create a real channel that will fail (but creates DB record)
-    # Option B: Manually insert a WatchChannel record
-    
-    # Finally, run this script to simulate a push notification
-    python scripts/simulate_push.py
-
-CUSTOMIZATION:
-Edit the CHANNEL_ID, RESOURCE_ID, and TOKEN values below to match
-a WatchChannel record in your database. You can get these from:
-- Running setup_watch (even if it fails, it tells you the values)
-- Creating a record manually in Django admin or shell
-
-WITHOUT A WATCH CHANNEL:
-If you just want to test the webhook endpoint without token verification,
-you can comment out the token verification in calsync/views.py temporarily.
+The script posts Google's webhook header format to a running application. A real
+saved channel ID and token are still required so the normal security checks and
+incremental sync path are tested.
 """
 
 import argparse
@@ -38,23 +11,13 @@ import sys
 
 import requests
 
-# =============================================================================
-# CONFIGURATION - Update these values!
-# =============================================================================
-
-# Get these from your WatchChannel record, or from setup_watch output
-# If you don't have a channel, create one first or use the --skip-token flag
+# Replace these placeholders or pass matching saved-channel values as options.
 CHANNEL_ID = "your-channel-id-here"
 RESOURCE_ID = "mock-resource-id"
 TOKEN = "your-token-here"
 
-# Webhook URL (localhost for development)
 WEBHOOK_URL = "http://localhost:8000/api/webhook/"
 
-
-# =============================================================================
-# MAIN SCRIPT
-# =============================================================================
 
 def simulate_push(
     channel_id: str,
@@ -64,16 +27,11 @@ def simulate_push(
     state: str = "exists",
     message_number: int = 2,
 ):
-    """
-    Send a simulated push notification to the webhook.
-    
-    PARAMETERS:
-    - channel_id: Your WatchChannel's UUID
-    - resource_id: Google's resource ID (can be anything for testing)
-    - token: The secret token for verification
-    - webhook_url: Where to send the notification
-    - state: "sync" for initial notification, "exists" for changes
-    - message_number: Incrementing message counter
+    """Send one Google-shaped notification to the chosen webhook URL.
+
+    Channel, resource, state, token, and message values become request headers; the
+    body stays empty like Google's real request. The response is printed and a
+    connection failure exits with a nonzero status.
     """
     headers = {
         "X-Goog-Channel-ID": channel_id,
@@ -95,7 +53,7 @@ def simulate_push(
         response = requests.post(
             webhook_url,
             headers=headers,
-            data="",  # Google sends empty body
+            data="",
             timeout=30,
         )
         
@@ -129,6 +87,11 @@ def simulate_push(
 
 
 def main():
+    """Parse command options, warn about placeholders, and run the simulation.
+
+    Defaults support a local Django server. Explicit values let the same script use
+    any saved channel or reachable webhook endpoint.
+    """
     parser = argparse.ArgumentParser(
         description="Simulate Google Calendar push notifications for testing."
     )
@@ -172,7 +135,7 @@ def main():
     
     args = parser.parse_args()
     
-    # Warn if using defaults
+    # Placeholder credentials cannot pass webhook verification.
     if args.channel_id == "your-channel-id-here":
         print("=" * 60)
         print("WARNING: Using placeholder CHANNEL_ID!")

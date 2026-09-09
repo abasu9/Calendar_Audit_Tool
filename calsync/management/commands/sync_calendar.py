@@ -1,23 +1,7 @@
-"""
-Django Management Command: sync_calendar
+"""Synchronize Google Calendar events from the command line.
 
-PURPOSE:
-Synchronize calendar events from Google Calendar to our local database.
-Supports both full sync (fetch everything) and incremental sync (only changes).
-
-USAGE:
-    # Incremental sync (default - only fetch changes since last sync)
-    python manage.py sync_calendar
-    
-    # Full sync (fetch all events, ignore existing syncToken)
-    python manage.py sync_calendar --full
-    
-    # Sync a specific calendar (not just "primary")
-    python manage.py sync_calendar --calendar user@example.com
-
-WHEN TO USE:
-- --full: First time setup, or if you suspect data is out of sync
-- (no flags): Regular sync, also available from the dashboard
+The command performs a full sync when requested or when no saved token exists.
+Otherwise it asks Google only for changes since the previous sync.
 """
 
 from django.core.management.base import BaseCommand, CommandError
@@ -27,19 +11,15 @@ from calsync.sync import full_sync, incremental_sync
 
 
 class Command(BaseCommand):
-    """
-    Sync calendar events from Google Calendar to local database.
-    """
+    """Expose full and incremental calendar synchronization as a command."""
     
     help = "Synchronize calendar events from Google Calendar."
     
     def add_arguments(self, parser):
-        """
-        Define command-line arguments.
-        
-        ARGUMENTS:
-        --full      : Force full sync (ignore existing syncToken)
-        --calendar  : Which calendar to sync (default: primary)
+        """Register the force-full flag and calendar ID option.
+
+        Django validates these values and supplies defaults before calling
+        ``handle``.
         """
         parser.add_argument(
             "--full",
@@ -54,18 +34,16 @@ class Command(BaseCommand):
         )
     
     def handle(self, *args, **options):
-        """
-        Main entry point - run the sync.
-        
-        WHAT THIS DOES:
-        1. Check if full or incremental sync
-        2. Call appropriate sync function
-        3. Print results
+        """Choose a sync type, run it, and print event counts.
+
+        Saved state determines whether an incremental sync is possible. A failed
+        result becomes a command error; a successful result includes a short event
+        preview.
         """
         calendar_id = options["calendar"]
         do_full_sync = options["full"]
         
-        # Show current state
+        # A saved token allows Google to return only later changes.
         try:
             sync_state = SyncState.objects.get(calendar_id=calendar_id)
             has_token = bool(sync_state.sync_token)
@@ -78,7 +56,6 @@ class Command(BaseCommand):
             self.stdout.write("No previous sync state found.")
             has_token = False
         
-        # Determine sync type
         if do_full_sync:
             self.stdout.write(self.style.WARNING("\nStarting FULL sync..."))
             result = full_sync(calendar_id)
@@ -91,7 +68,6 @@ class Command(BaseCommand):
             self.stdout.write("\nStarting incremental sync...")
             result = incremental_sync(calendar_id)
         
-        # Show results
         if not result.success:
             raise CommandError(f"Sync failed: {result.error}")
         
@@ -110,7 +86,7 @@ class Command(BaseCommand):
             )
         )
         
-        # Show recent events (all if <= 10, otherwise first 10)
+        # Keep the console preview short on calendars with many events.
         total_count = CalendarEvent.objects.filter(calendar_id=calendar_id).count()
         recent = CalendarEvent.objects.filter(
             calendar_id=calendar_id

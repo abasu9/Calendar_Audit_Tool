@@ -15,8 +15,7 @@ or delayed. There is no periodic scheduler.
 - Keep calendar data current through real-time webhooks
 - Refresh calendar data manually when needed
 - Store calendar data in Supabase or local PostgreSQL
-- Review meeting trends from the previous three months
-- Use the dashboards on desktop and mobile
+- Review meeting audit metrics from the Dashboard
 
 ## Implementation phases
 

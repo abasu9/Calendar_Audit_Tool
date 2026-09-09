@@ -1,24 +1,7 @@
-"""
-Django Management Command: stop_watch
+"""List or stop Google Calendar webhook subscriptions.
 
-PURPOSE:
-Stop a watch channel (unsubscribe from push notifications).
-Use this to clean up channels you no longer need.
-
-USAGE:
-    # Stop a specific channel by ID
-    python manage.py stop_watch --channel-id abc123-def456-...
-    
-    # List active channels without stopping
-    python manage.py stop_watch --list
-    
-    # Stop ALL active channels (use with caution)
-    python manage.py stop_watch --all
-
-WHEN TO USE:
-- When you're done testing push notifications
-- When switching webhook URLs
-- When a channel is about to expire and you're creating a new one
+The command reads saved active channels and can deactivate one channel or all of
+them both at Google and in the local database.
 """
 
 from django.core.management.base import BaseCommand, CommandError
@@ -31,20 +14,15 @@ from calsync.watch import (
 
 
 class Command(BaseCommand):
-    """
-    Stop a watch channel or list active channels.
-    """
+    """Expose watch-channel inspection and cleanup as a Django command."""
     
     help = "Stop a watch channel for Google Calendar push notifications."
     
     def add_arguments(self, parser):
-        """
-        Define command-line arguments.
-        
-        ARGUMENTS:
-        --channel-id : Specific channel UUID to stop
-        --list       : Just list active channels, don't stop anything
-        --all        : Stop ALL active channels
+        """Register options for listing, stopping one, or stopping all channels.
+
+        Django parses these mutually meaningful actions and supplies their values
+        to ``handle``.
         """
         parser.add_argument(
             "--channel-id",
@@ -63,35 +41,31 @@ class Command(BaseCommand):
         )
     
     def handle(self, *args, **options):
+        """Clean expired records and run the action selected by the user.
+
+        The function checks list, all, and channel-ID options in order. With no
+        action it prints the active channels and a short usage hint.
         """
-        Main entry point - stop channel(s) or list them.
-        """
-        # Clean up any expired channels first
         expired_count = cleanup_expired_channels()
         if expired_count > 0:
             self.stdout.write(
                 f"Cleaned up {expired_count} expired channel(s)."
             )
         
-        # Get all active channels
         active_channels = get_active_channels()
         
         if options["list"]:
-            # Just list channels
             self._list_channels(active_channels)
             return
         
         if options["all"]:
-            # Stop all channels
             self._stop_all_channels(active_channels)
             return
         
         if options["channel_id"]:
-            # Stop specific channel
             self._stop_channel(options["channel_id"])
             return
         
-        # No action specified - show help
         self._list_channels(active_channels)
         self.stdout.write(
             "\nUse --channel-id UUID to stop a specific channel, "
@@ -99,8 +73,10 @@ class Command(BaseCommand):
         )
     
     def _list_channels(self, channels):
-        """
-        Display all active channels.
+        """Print the important fields for each active channel.
+
+        An empty collection produces a clear message; otherwise every channel is
+        listed with its calendar, callback URL, expiration, and expired state.
         """
         if not channels:
             self.stdout.write("No active watch channels.")
@@ -119,8 +95,10 @@ class Command(BaseCommand):
                 self.stdout.write(self.style.WARNING("  Status: EXPIRED"))
     
     def _stop_channel(self, channel_id):
-        """
-        Stop a specific channel.
+        """Stop one channel and turn a failed stop into a command error.
+
+        The shared watch helper contacts Google and updates the database, while
+        this method only formats the command-line result.
         """
         self.stdout.write(f"Stopping channel: {channel_id}")
         
@@ -136,8 +114,10 @@ class Command(BaseCommand):
             )
     
     def _stop_all_channels(self, channels):
-        """
-        Stop all active channels.
+        """Try to stop every supplied channel and print a final count.
+
+        Each channel is handled independently so one failure does not prevent the
+        command from cleaning up the remaining subscriptions.
         """
         if not channels:
             self.stdout.write("No active channels to stop.")

@@ -1,4 +1,8 @@
-"""Tests for project-level configuration helpers."""
+"""Verify database settings created from different environment layouts.
+
+Each test supplies an isolated mapping, builds a configuration dictionary, and
+checks local defaults, Supabase pooler behavior, precedence, or invalid input.
+"""
 
 from django.core.exceptions import ImproperlyConfigured
 from django.test import SimpleTestCase
@@ -7,7 +11,11 @@ from config.database import database_config_from_env
 
 
 class DatabaseConfigTests(SimpleTestCase):
+    """Cover local and URL-based PostgreSQL configuration paths."""
+
     def test_uses_discrete_postgres_variables_without_database_url(self):
+        """Verify that separate PostgreSQL values work without a URL."""
+
         config = database_config_from_env(
             {
                 "POSTGRES_DB": "calendar_audit",
@@ -24,6 +32,8 @@ class DatabaseConfigTests(SimpleTestCase):
         self.assertEqual(config["PORT"], "5433")
 
     def test_parses_supabase_session_pooler_url_and_requires_ssl(self):
+        """Verify session-pooler parsing, decoding, and default SSL."""
+
         config = database_config_from_env(
             {
                 "DATABASE_URL": (
@@ -40,6 +50,8 @@ class DatabaseConfigTests(SimpleTestCase):
         self.assertNotIn("DISABLE_SERVER_SIDE_CURSORS", config)
 
     def test_configures_transaction_pooler_safely(self):
+        """Verify port 6543 receives transaction-pooling safety options."""
+
         config = database_config_from_env(
             {
                 "DATABASE_URL": (
@@ -59,6 +71,8 @@ class DatabaseConfigTests(SimpleTestCase):
         )
 
     def test_database_url_takes_precedence(self):
+        """Verify that ``DATABASE_URL`` overrides separate local values."""
+
         config = database_config_from_env(
             {
                 "DATABASE_URL": "postgresql://remote:secret@db.example.com/app",
@@ -70,6 +84,8 @@ class DatabaseConfigTests(SimpleTestCase):
         self.assertEqual(config["HOST"], "db.example.com")
 
     def test_rejects_non_postgres_url(self):
+        """Verify that database URLs for unsupported engines are rejected."""
+
         with self.assertRaisesMessage(
             ImproperlyConfigured, "DATABASE_URL must start with"
         ):

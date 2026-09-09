@@ -1,13 +1,20 @@
-"""Verify the configured database connection without exposing credentials."""
+"""Provide a safe command for checking the configured PostgreSQL connection."""
 
 from django.core.management.base import BaseCommand, CommandError
 from django.db import connection
 
 
 class Command(BaseCommand):
+    """Query basic server details without printing the connection password."""
+
     help = "Check the configured PostgreSQL/Supabase database connection."
 
     def handle(self, *args, **options):
+        """Open the connection and print safe database and SSL details.
+
+        A single query reads the database name, user, server version, and SSL
+        state. Connection failures are returned as Django command errors.
+        """
         try:
             with connection.cursor() as cursor:
                 cursor.execute(

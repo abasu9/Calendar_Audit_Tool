@@ -1,24 +1,7 @@
-"""
-Django Management Command: test_webhook
+"""Send a local request that looks like a Google webhook notification.
 
-PURPOSE:
-Test the webhook endpoint by simulating a Google push notification.
-Uses an existing WatchChannel record from the database, so you don't
-have to manually copy tokens around.
-
-USAGE:
-    # Test with the first active watch channel
-    python manage.py test_webhook
-    
-    # Test with a specific channel
-    python manage.py test_webhook --channel-id abc123-...
-    
-    # Simulate a sync message (initial notification)
-    python manage.py test_webhook --sync
-
-PREREQUISITES:
-1. Server must be running: python manage.py runserver
-2. At least one WatchChannel must exist (create with setup_watch or Django shell)
+The command uses a saved watch channel to build authentic header names and lets
+developers exercise the running webhook endpoint without changing a calendar.
 """
 
 import requests
@@ -28,13 +11,15 @@ from calsync.models import WatchChannel
 
 
 class Command(BaseCommand):
-    """
-    Test the webhook endpoint with a simulated push notification.
-    """
+    """Expose webhook simulation as a Django management command."""
     
     help = "Test the webhook endpoint with a simulated Google push notification."
     
     def add_arguments(self, parser):
+        """Register channel, notification-state, and target-URL options.
+
+        When no channel is named, the first active saved channel is used.
+        """
         parser.add_argument(
             "--channel-id",
             type=str,
@@ -53,7 +38,11 @@ class Command(BaseCommand):
         )
     
     def handle(self, *args, **options):
-        # Find a watch channel to use
+        """Build notification headers, send the request, and print the response.
+
+        The method finds a usable channel, mirrors Google's request headers, then
+        explains common HTTP results or raises a command error if no server answers.
+        """
         if options["channel_id"]:
             try:
                 channel = WatchChannel.objects.get(channel_id=options["channel_id"])
@@ -75,7 +64,7 @@ class Command(BaseCommand):
         self.stdout.write(f"  Channel ID: {channel.channel_id}")
         self.stdout.write(f"  Resource State: {state}")
         
-        # Build headers exactly like Google would
+        # Header names and values mirror a real Google notification.
         headers = {
             "X-Goog-Channel-ID": str(channel.channel_id),
             "X-Goog-Resource-ID": channel.resource_id or "mock-resource",

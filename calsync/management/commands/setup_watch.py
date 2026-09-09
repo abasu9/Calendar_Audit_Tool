@@ -1,28 +1,8 @@
-"""
-Django Management Command: setup_watch
+"""Create a Google Calendar webhook subscription from the command line.
 
-PURPOSE:
-Create a watch channel to receive push notifications from Google Calendar.
-When events change, Google will POST to your webhook URL.
-
-USAGE:
-    # Create watch channel for primary calendar
-    python manage.py setup_watch --url https://your-domain.com/api/webhook/
-    
-    # Watch a specific calendar
-    python manage.py setup_watch --url https://example.com/api/webhook/ --calendar user@example.com
-    
-    # Custom expiration (default: 7 days)
-    python manage.py setup_watch --url https://example.com/api/webhook/ --days 14
-
-REQUIREMENTS:
-- URL must be HTTPS with a valid (non-self-signed) certificate
-- Google cannot reach localhost directly
-- For local development: use ngrok (ngrok http 8000) and use the HTTPS URL
-
-FOR LOCAL TESTING WITHOUT TUNNEL:
-Use the mock script instead:
-    python scripts/simulate_push.py
+The command accepts a public callback URL, calendar, and lifetime, then asks
+Google to send change notifications to that URL. Local development needs a
+public HTTPS tunnel because Google cannot call a localhost address.
 """
 
 from django.core.management.base import BaseCommand, CommandError
@@ -31,20 +11,15 @@ from calsync.watch import create_watch_channel, get_active_channels
 
 
 class Command(BaseCommand):
-    """
-    Create a watch channel for Google Calendar push notifications.
-    """
+    """Expose watch-channel creation as a Django management command."""
     
     help = "Set up a watch channel for Google Calendar push notifications."
     
     def add_arguments(self, parser):
-        """
-        Define command-line arguments.
-        
-        ARGUMENTS:
-        --url       : Webhook URL (required, must be HTTPS)
-        --calendar  : Which calendar to watch (default: primary)
-        --days      : Expiration in days (default: 7, max ~30)
+        """Register the webhook URL, calendar ID, and lifetime options.
+
+        Django uses these definitions to validate command-line input and provide
+        defaults before passing the values to ``handle``.
         """
         parser.add_argument(
             "--url",
@@ -66,19 +41,17 @@ class Command(BaseCommand):
         )
     
     def handle(self, *args, **options):
-        """
-        Main entry point - create the watch channel.
-        
-        WHAT THIS DOES:
-        1. Show any existing active channels
-        2. Create a new watch channel via Google API
-        3. Display the channel details (needed for testing)
+        """Create the requested channel and print its saved details.
+
+        Existing channels are shown first to make duplicates visible. The command
+        then calls Google through ``create_watch_channel`` and reports a useful
+        error when registration fails.
         """
         webhook_url = options["url"]
         calendar_id = options["calendar"]
         expiration_days = options["days"]
         
-        # Warn about HTTP URLs
+        # Public Google callbacks normally require HTTPS.
         if webhook_url.startswith("http://") and "localhost" not in webhook_url:
             self.stdout.write(
                 self.style.WARNING(
@@ -87,7 +60,7 @@ class Command(BaseCommand):
                 )
             )
         
-        # Show existing channels
+        # Make existing subscriptions visible before adding another one.
         active_channels = get_active_channels(calendar_id)
         if active_channels:
             self.stdout.write(f"\nExisting active channels for {calendar_id}:")
@@ -97,7 +70,6 @@ class Command(BaseCommand):
                 )
             self.stdout.write("")
         
-        # Create the watch channel
         self.stdout.write(f"Creating watch channel...")
         self.stdout.write(f"  Calendar: {calendar_id}")
         self.stdout.write(f"  Webhook URL: {webhook_url}")

@@ -1,8 +1,10 @@
+# Web framework and PostgreSQL configuration.
 Django>=6.1,<6.2
 djangorestframework>=3.16
 psycopg[binary]>=3.3
 python-dotenv>=1.1
 
+# Google Calendar API and OAuth support.
 google-api-python-client>=2.200
 google-auth-httplib2>=0.2
 google-auth-oauthlib>=1.2
