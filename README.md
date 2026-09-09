@@ -10,15 +10,39 @@ or delayed. There is no periodic scheduler.
 
 ## Features
 
-- Google OAuth 2.0 authorization with PKCE and offline refresh tokens
-- Upcoming seven-day calendar preview
-- Full and `syncToken`-based incremental event synchronization
-- Real-time Google Calendar push notifications with token verification
-- Manual backup sync from the application and audit dashboards
-- PostgreSQL storage with Supabase SSL and pooler support
-- Six calendar-audit metrics covering the previous three months
-- Responsive, Avoma-inspired dashboard styling
-- Database health and connection-check utilities
+- Connect a Google Calendar securely
+- Preview events for the next seven days
+- Keep calendar data current through real-time webhooks
+- Refresh calendar data manually when needed
+- Store calendar data in Supabase or local PostgreSQL
+- Review meeting trends from the previous three months
+- Use the dashboards on desktop and mobile
+
+## Implementation phases
+
+### Phase 1 — Google Calendar connection
+
+- Set up the Django project and Google Calendar API client
+- Add the Google OAuth authorization flow
+- Display the connected calendar and upcoming events
+- Add command-line tools for testing calendar access
+
+### Phase 2 — Calendar synchronization
+
+- Store calendar events in PostgreSQL
+- Add initial full sync and incremental sync
+- Track Google sync tokens and recover from expired tokens
+- Receive real-time updates through Google push notifications
+- Add manual dashboard sync as a backup
+
+### Phase 3 — Calendar audit
+
+- Calculate monthly meeting time and meeting counts
+- Identify busiest and most relaxed weeks
+- Calculate weekly meeting averages
+- Find the most frequent meeting contacts
+- Measure recruiting and interview time
+- Expose the results through APIs and the audit dashboard
 
 ## Technology
 
@@ -36,7 +60,6 @@ config/
   database.py            DATABASE_URL, SSL, and pooler configuration
   settings.py            Django and Google integration settings
   api_urls.py             API route composition
-  views.py                Database health endpoint
 
 googlecal/
   client.py               Credential loading and Google API client
@@ -50,7 +73,7 @@ calsync/
   sync.py                 Full and incremental synchronization
   watch.py                Google push-channel management
   views.py                Manual sync and webhook endpoints
-  management/commands/    Sync, watch, and database utilities
+  management/commands/    Calendar sync and watch utilities
 
 calaudit/
   queries.py              Calendar analytics queries
@@ -93,8 +116,6 @@ for this persistent Django application, including from IPv4-only networks.
 ```dotenv
 DATABASE_URL=postgresql://postgres.PROJECT_REF:ENCODED_PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres?sslmode=require
 DB_CONN_MAX_AGE=60
-DB_CONN_HEALTH_CHECKS=True
-DB_CONNECT_TIMEOUT=10
 ```
 
 Percent-encode reserved characters in the password before placing it in the
@@ -111,12 +132,6 @@ POSTGRES_USER=
 POSTGRES_PASSWORD=
 POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
-```
-
-Verify the configured target without printing its password or connection URI:
-
-```bash
-.venv/bin/python manage.py check_database
 ```
 
 ### Google OAuth
@@ -252,14 +267,10 @@ stored in UTC.
 | `GET` | `/api/audit/weekly-averages/` | Weekly meeting averages |
 | `GET` | `/api/audit/top-contacts/` | Most frequent contacts |
 | `GET` | `/api/audit/interview-time/` | Recruiting and interview time |
-| `GET` | `/api/health/` | Application and database health |
 
 ## Useful commands
 
 ```bash
-# Verify database connectivity without exposing credentials
-.venv/bin/python manage.py check_database
-
 # Initial or forced full calendar sync
 .venv/bin/python manage.py sync_calendar --full
 
