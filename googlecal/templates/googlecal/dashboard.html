@@ -2,38 +2,146 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Calendar Audit Tool</title>
   <style>
-    :root { color-scheme: light dark; }
+    :root {
+      color-scheme: light;
+      --ink: #0e1017;
+      --slate: #454a55;
+      --muted: #7f8392;
+      --canvas: #f5f7f8;
+      --surface: #ffffff;
+      --border: #dee3e7;
+      --coral: #e34626;
+      --coral-dark: #b5361f;
+      --seashell: #fbefed;
+      --blue-soft: #eef8ff;
+      --green: #059666;
+      --green-soft: #e9fdf6;
+      --yellow-soft: #fdf8e7;
+    }
+    * { box-sizing: border-box; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      max-width: 60rem; margin: 3rem auto; padding: 0 1.5rem; line-height: 1.5;
+      min-height: 100vh;
+      max-width: 68rem;
+      margin: 0 auto;
+      padding: 4.5rem 1.5rem 5rem;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 5% 2%, rgba(251, 207, 35, 0.18), transparent 22rem),
+        radial-gradient(circle at 95% 8%, rgba(24, 173, 242, 0.12), transparent 24rem),
+        var(--canvas);
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
     }
-    h1 { margin-bottom: 0.25rem; }
-    .sub { opacity: 0.7; margin-top: 0; }
+    h1 {
+      max-width: 46rem;
+      margin: 0 0 0.5rem;
+      font-size: clamp(2.35rem, 6vw, 4.25rem);
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      line-height: 1.05;
+    }
+    h2 {
+      margin: 0 0 0.75rem;
+      font-size: 1.25rem;
+      letter-spacing: -0.02em;
+    }
+    p { color: var(--slate); }
+    a { color: var(--coral-dark); }
+    .page-header {
+      position: relative;
+      margin-bottom: 1.5rem;
+      padding: 2.25rem;
+      overflow: hidden;
+      color: #fff;
+      background: var(--ink);
+      border-radius: 1.5rem;
+      box-shadow: 0 0.5rem 2rem rgba(14, 16, 23, 0.12);
+    }
+    .page-header::after {
+      content: "";
+      position: absolute;
+      width: 12rem;
+      height: 12rem;
+      right: -4rem;
+      bottom: -7rem;
+      background: rgba(227, 70, 38, 0.24);
+      border-radius: 50%;
+    }
+    .page-header h1 { color: #fff; }
+    .sub {
+      position: relative;
+      z-index: 1;
+      margin: 0;
+      color: rgba(255, 255, 255, 0.66);
+      font-size: 1.05rem;
+    }
     .card {
-      border: 1px solid rgba(128, 128, 128, 0.35); border-radius: 8px;
-      padding: 1rem 1.25rem; margin: 1.5rem 0;
+      margin: 1rem 0;
+      padding: 1.5rem 1.75rem;
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 1.25rem;
+      box-shadow: 0 0.125rem 1rem rgba(14, 16, 23, 0.04);
     }
-    .error { border-color: #d9534f; }
-    .notice { border-color: #f0ad4e; }
+    .card > :first-child { margin-top: 0; }
+    .card > :last-child { margin-bottom: 0; }
+    .error { background: var(--seashell); border-color: #ffd6d0; }
+    .notice { background: var(--yellow-soft); border-color: #f5da8d; }
+    .feature-card {
+      background: linear-gradient(135deg, var(--seashell), var(--blue-soft));
+      border-color: #ffd6d0;
+    }
+    .connection-card { background: var(--green-soft); border-color: #9ff1d6; }
+    .sync-card { background: var(--yellow-soft); border-color: #f5da8d; }
+    .events-card { border-top: 3px solid #18adf2; }
+    .connect-card { background: linear-gradient(135deg, var(--surface), var(--seashell)); }
     .btn {
-      display: inline-block; padding: 0.6rem 1.1rem; border-radius: 6px;
-      background: #1a73e8; color: #fff; text-decoration: none; font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 3rem;
+      padding: 0.7rem 1.5rem;
+      border: 1.5px solid rgba(35, 38, 45, 0.1);
+      border-radius: 999px;
+      color: #fff;
+      background: var(--coral);
+      box-shadow: inset 0 4px 10px rgba(255,255,255,0.1), inset 0 -4px 16px rgba(255,255,255,0.16);
+      cursor: pointer;
+      font: inherit;
+      font-weight: 600;
+      text-decoration: none;
+      transition: background 160ms ease, transform 160ms ease, box-shadow 160ms ease;
     }
+    .btn:hover { background: var(--coral-dark); transform: translateY(-1px); }
+    .btn:focus-visible { outline: 3px solid rgba(227, 70, 38, 0.25); outline-offset: 3px; }
+    .btn:disabled { cursor: wait; opacity: 0.65; }
+    .sync-status { margin: 0.75rem 0 0; min-height: 1.5rem; color: var(--muted); }
+    .sync-status.success { color: var(--green); }
+    .sync-status.error { color: var(--coral-dark); }
     table { border-collapse: collapse; width: 100%; margin-top: 0.5rem; }
-    th, td { text-align: left; padding: 0.45rem 0.6rem;
-             border-bottom: 1px solid rgba(128, 128, 128, 0.25); }
-    th { font-size: 0.8rem; text-transform: uppercase; opacity: 0.65; }
+    th, td { text-align: left; padding: 0.8rem 0.65rem; border-bottom: 1px solid var(--border); }
+    tr:last-child th, tr:last-child td { border-bottom: 0; }
+    th { color: var(--muted); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
     td.num { text-align: right; font-variant-numeric: tabular-nums; }
-    code { background: rgba(128, 128, 128, 0.18); padding: 0.1rem 0.3rem; border-radius: 3px; }
+    code { color: var(--ink); background: #edeff2; padding: 0.15rem 0.4rem; border-radius: 0.35rem; }
     ul.scopes { margin: 0.25rem 0 0; padding-left: 1.2rem; }
+    @media (max-width: 640px) {
+      body { padding: 1rem 1rem 3rem; }
+      .page-header { padding: 1.75rem 1.25rem; }
+      .card { padding: 1.25rem; overflow-x: auto; }
+      th, td { padding: 0.65rem 0.5rem; }
+    }
   </style>
 </head>
 <body>
 
-  <h1>Calendar Audit Tool</h1>
-  <p class="sub">Phase 1 &mdash; Google Calendar connectivity check</p>
+  <header class="page-header">
+    <h1>Calendar Audit Tool</h1>
+    <p class="sub">Phase 1 &mdash; Google Calendar connectivity check</p>
+  </header>
 
   {% if error %}
     <div class="card error">
@@ -47,7 +155,7 @@
     {% if notice %}
       <div class="card notice"><p>{{ notice }}</p></div>
     {% endif %}
-    <div class="card">
+    <div class="card connect-card">
       <h2>Connect your Google Calendar</h2>
       <p>
         You will be sent to Google's consent screen. Approving it stores a token
@@ -66,7 +174,7 @@
       </p>
     </div>
   {% else %}
-    <div class="card">
+    <div class="card connection-card">
       <h2>Connected</h2>
       <table>
         <tr><th>Primary calendar</th><td>{{ calendar_id }}</td></tr>
@@ -75,7 +183,20 @@
       </table>
     </div>
 
-    <div class="card">
+    <div class="card sync-card">
+      <h2>Calendar data</h2>
+      <p>
+        Updates sync automatically. Use this backup refresh if recent changes
+        are missing from your audit.
+      </p>
+      <form id="sync-form" action="{% url 'manual-sync' %}" method="post">
+        {% csrf_token %}
+        <button class="btn" id="sync-button" type="submit">Sync calendar</button>
+      </form>
+      <p class="sync-status" id="sync-status" role="status" aria-live="polite"></p>
+    </div>
+
+    <div class="card events-card">
       <h2>Next {{ preview_days }} days</h2>
       <p>
         {{ events|length }} event{{ events|length|pluralize }},
@@ -102,7 +223,7 @@
       {% endif %}
     </div>
 
-    <div class="card" style="background: linear-gradient(135deg, rgba(26,115,232,0.1) 0%, rgba(52,168,83,0.1) 100%);">
+    <div class="card feature-card">
       <h2>Audit Dashboard</h2>
       <p>
         View detailed analytics about your meeting patterns: monthly time spent,
@@ -122,6 +243,48 @@
       </p>
     </div>
   {% endif %}
+
+  <script>
+    const syncForm = document.getElementById('sync-form');
+
+    if (syncForm) {
+      syncForm.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const button = document.getElementById('sync-button');
+        const status = document.getElementById('sync-status');
+        const csrfToken = syncForm.querySelector('[name=csrfmiddlewaretoken]').value;
+
+        button.disabled = true;
+        button.textContent = 'Syncing...';
+        status.className = 'sync-status';
+        status.textContent = 'Fetching the latest calendar changes.';
+
+        try {
+          const response = await fetch(syncForm.action, {
+            method: 'POST',
+            headers: {
+              'Accept': 'application/json',
+              'X-CSRFToken': csrfToken,
+            },
+          });
+          const data = await response.json();
+
+          if (!response.ok || !data.success) {
+            throw new Error(data.error || 'Calendar sync failed.');
+          }
+
+          status.className = 'sync-status success';
+          status.textContent = `Sync complete: ${data.created} added, ${data.updated} updated, ${data.deleted} removed (${data.total_events} total).`;
+        } catch (error) {
+          status.className = 'sync-status error';
+          status.textContent = error.message || 'Calendar sync failed.';
+        } finally {
+          button.disabled = false;
+          button.textContent = 'Sync calendar';
+        }
+      });
+    }
+  </script>
 
 </body>
 </html>

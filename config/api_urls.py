@@ -7,6 +7,7 @@ All URLs here are prefixed with /api/ (see config/urls.py).
 
 ENDPOINTS:
 - GET /api/health/ -> Health check endpoint
+- POST /api/sync/ -> User-requested calendar sync
 - POST /api/webhook/ -> Google push notification receiver (from calsync app)
 
 FUTURE ENDPOINTS (Phase 3):

@@ -122,8 +122,30 @@ The same calendar is readable from the command line once authorised:
   individual instances. The audit metrics need actual occurrences, not rules.
 - Calendar data is handled in UTC. `REPORT_TIME_ZONE` only affects how events
   are displayed and how they are bucketed into weeks and months.
-- Phase 2 freshness: `events.watch` push notifications will trigger a
-  `syncToken`-based incremental fetch. Notifications carry no payload and are
-  not fully reliable, so a periodic full-sync safety net is also required. The
-  webhook needs a public HTTPS URL with a valid certificate, so a tunnel
-  (ngrok or cloudflared) is needed for local development.
+- Google Calendar push notifications are the primary sync mechanism and
+  trigger a `syncToken`-based incremental fetch through `/api/webhook/`.
+  Calendar data can also be refreshed on demand from either dashboard as a
+  backup for missed or delayed notifications. The manual action automatically
+  falls back to a full sync when there is no usable token.
+
+## Supabase database
+
+Copy the Session pooler connection URI from the Supabase project's **Connect**
+panel into `.env` as `DATABASE_URL`. Session mode uses port `5432` and works on
+IPv4 networks. Percent-encode special characters in the database password.
+
+```dotenv
+DATABASE_URL=postgresql://postgres.PROJECT_REF:ENCODED_PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres?sslmode=require
+DB_CONN_MAX_AGE=60
+```
+
+Then validate the connection and apply the existing Django migrations:
+
+```bash
+python manage.py check_database
+python manage.py migrate
+```
+
+For a serverless deployment, Supabase's transaction pooler uses port `6543`.
+The database utility detects that port and disables prepared statements and
+server-side cursors automatically.

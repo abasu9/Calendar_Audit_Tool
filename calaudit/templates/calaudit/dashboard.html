@@ -6,32 +6,32 @@
   <title>Calendar Audit Dashboard</title>
   <style>
     :root {
-      color-scheme: light dark;
-      --bg: #fff;
+      color-scheme: light;
+      --bg: #f5f7f8;
       --card-bg: #fff;
-      --border: rgba(128, 128, 128, 0.25);
-      --text: #1a1a1a;
-      --text-muted: rgba(0, 0, 0, 0.6);
-      --accent: #1a73e8;
-      --success: #34a853;
-      --warning: #f9ab00;
-    }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #1a1a1a;
-        --card-bg: #242424;
-        --border: rgba(255, 255, 255, 0.15);
-        --text: #e8e8e8;
-        --text-muted: rgba(255, 255, 255, 0.6);
-      }
+      --border: #dee3e7;
+      --text: #0e1017;
+      --text-muted: #7f8392;
+      --accent: #e34626;
+      --accent-dark: #b5361f;
+      --success: #059666;
+      --warning: #cb8903;
+      --seashell: #fbefed;
+      --yellow-soft: #fdf8e7;
+      --blue-soft: #eef8ff;
+      --green-soft: #e9fdf6;
+      --purple-soft: #f9f4ff;
     }
     * { box-sizing: border-box; }
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: var(--bg);
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at 8% 0%, rgba(251, 207, 35, 0.16), transparent 22rem),
+        radial-gradient(circle at 92% 4%, rgba(24, 173, 242, 0.12), transparent 24rem),
+        var(--bg);
       color: var(--text);
       margin: 0;
-      padding: 2rem;
+      padding: 2.5rem 2rem 4rem;
       line-height: 1.5;
     }
     .container {
@@ -40,17 +40,33 @@
     }
     header {
       margin-bottom: 2rem;
+      padding: 1.75rem 2rem 2rem;
+      color: #fff;
+      background: #0e1017;
+      border-radius: 1.5rem;
+      box-shadow: 0 0.5rem 2rem rgba(14, 16, 23, 0.12);
+    }
+    .header-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      gap: 1rem;
     }
     h1 {
       margin: 0 0 0.25rem;
-      font-size: 1.75rem;
+      font-size: clamp(1.9rem, 4vw, 2.8rem);
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      line-height: 1.1;
     }
     .subtitle {
-      color: var(--text-muted);
+      color: rgba(255, 255, 255, 0.66);
       margin: 0;
     }
     .back-link {
-      color: var(--accent);
+      display: inline-block;
+      margin-bottom: 1rem;
+      color: rgba(255, 255, 255, 0.72);
       text-decoration: none;
       font-size: 0.9rem;
     }
@@ -60,34 +76,38 @@
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
-      gap: 1.5rem;
+      gap: 1.25rem;
     }
     .card {
       background: var(--card-bg);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 1.25rem;
+      border-radius: 1.25rem;
+      padding: 1.5rem;
+      box-shadow: 0 0.125rem 1rem rgba(14, 16, 23, 0.04);
     }
+    .grid > .card:nth-child(4n + 1) { border-top: 3px solid #ebb207; }
+    .grid > .card:nth-child(4n + 2) { border-top: 3px solid #18adf2; }
+    .grid > .card:nth-child(4n + 3) { border-top: 3px solid #b268f8; }
+    .grid > .card:nth-child(4n + 4) { border-top: 3px solid #10b981; }
     .card h2 {
       margin: 0 0 1rem;
-      font-size: 1rem;
-      font-weight: 600;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -0.01em;
     }
     .loading {
       color: var(--text-muted);
       font-style: italic;
     }
     .error {
-      color: #d93025;
+      color: var(--accent-dark);
     }
     .stat-row {
       display: flex;
       justify-content: space-between;
       align-items: baseline;
-      padding: 0.5rem 0;
+      padding: 0.75rem 0;
       border-bottom: 1px solid var(--border);
     }
     .stat-row:last-child {
@@ -99,7 +119,7 @@
     }
     .stat-value {
       font-size: 1.1rem;
-      font-weight: 600;
+      font-weight: 700;
       font-variant-numeric: tabular-nums;
     }
     .big-stat {
@@ -108,7 +128,7 @@
     }
     .big-stat .number {
       font-size: 2.5rem;
-      font-weight: 700;
+      font-weight: 800;
       color: var(--accent);
     }
     .big-stat .label {
@@ -116,16 +136,19 @@
       font-size: 0.85rem;
     }
     .highlight-box {
-      background: rgba(26, 115, 232, 0.1);
-      border-radius: 8px;
-      padding: 0.75rem 1rem;
+      background: var(--blue-soft);
+      border: 1px solid #b2e3fb;
+      border-radius: 1rem;
+      padding: 1rem;
       margin-bottom: 0.75rem;
     }
     .highlight-box.warning {
-      background: rgba(249, 171, 0, 0.15);
+      background: var(--yellow-soft);
+      border-color: #f5da8d;
     }
     .highlight-box.success {
-      background: rgba(52, 168, 83, 0.15);
+      background: var(--green-soft);
+      border-color: #9ff1d6;
     }
     .highlight-box .title {
       font-weight: 600;
@@ -147,14 +170,16 @@
     }
     th, td {
       text-align: left;
-      padding: 0.5rem 0.5rem;
+      padding: 0.7rem 0.5rem;
       border-bottom: 1px solid var(--border);
     }
+    tbody tr:last-child td { border-bottom: 0; }
     th {
-      font-size: 0.75rem;
+      font-size: 0.7rem;
       text-transform: uppercase;
       color: var(--text-muted);
       font-weight: 600;
+      letter-spacing: 0.08em;
     }
     td.num {
       text-align: right;
@@ -165,26 +190,67 @@
       color: var(--text-muted);
       padding: 1.5rem;
       font-size: 0.9rem;
+      background: var(--purple-soft);
+      border-radius: 1rem;
     }
     .tag {
       display: inline-block;
       padding: 0.15rem 0.5rem;
-      border-radius: 4px;
+      border-radius: 999px;
       font-size: 0.75rem;
       font-weight: 600;
       text-transform: uppercase;
     }
-    .tag.busy { background: rgba(217, 48, 37, 0.15); color: #d93025; }
-    .tag.relaxed { background: rgba(52, 168, 83, 0.15); color: #34a853; }
-    .tag.normal { background: rgba(128, 128, 128, 0.15); color: var(--text-muted); }
+    .tag.busy { background: #ffd6d0; color: var(--accent-dark); }
+    .tag.relaxed { background: #a7f3da; color: #047857; }
+    .tag.normal { background: #edeff2; color: #454a55; }
+    .sync-controls { text-align: right; }
+    .sync-button {
+      min-height: 3rem;
+      border: 1.5px solid rgba(35, 38, 45, 0.1);
+      border-radius: 999px;
+      padding: 0.7rem 1.5rem;
+      background: var(--accent);
+      color: #fff;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 600;
+      box-shadow: inset 0 4px 10px rgba(255,255,255,0.1), inset 0 -4px 16px rgba(255,255,255,0.16);
+      transition: background 160ms ease, transform 160ms ease;
+    }
+    .sync-button:hover { background: var(--accent-dark); transform: translateY(-1px); }
+    .sync-button:focus-visible { outline: 3px solid rgba(227, 70, 38, 0.3); outline-offset: 3px; }
+    .sync-button:disabled { cursor: wait; opacity: 0.65; }
+    .sync-status { margin: 0.35rem 0 0; min-height: 1.2rem; font-size: 0.8rem; }
+    .sync-status.success { color: #9ff1d6; }
+    .sync-status.error { color: #ffb4a8; }
+    @media (max-width: 600px) {
+      body { padding: 1rem; }
+      header { padding: 1.35rem; }
+      .header-row { align-items: flex-start; flex-direction: column; }
+      .sync-controls { text-align: left; }
+      .grid { grid-template-columns: 1fr; }
+      .card { padding: 1.25rem; overflow-x: auto; }
+    }
   </style>
 </head>
 <body>
   <div class="container">
     <header>
       <a href="/" class="back-link">&larr; Back to Calendar</a>
-      <h1>Calendar Audit Dashboard</h1>
-      <p class="subtitle">Summary of your meeting patterns over the last 3 months</p>
+      <div class="header-row">
+        <div>
+          <h1>Calendar Audit Dashboard</h1>
+          <p class="subtitle">Summary of your meeting patterns over the last 3 months</p>
+        </div>
+        <div class="sync-controls">
+          <form id="sync-form" action="{% url 'manual-sync' %}" method="post">
+            {% csrf_token %}
+            <button class="sync-button" id="sync-button" type="submit" title="Backup refresh for missed or delayed webhook updates">Sync calendar</button>
+          </form>
+          <p class="sync-status" id="sync-status" role="status" aria-live="polite"></p>
+        </div>
+      </div>
     </header>
 
     <div class="grid">
@@ -477,14 +543,57 @@
       }
     }
 
+    const metricLoaders = [
+      loadMonthlyTime,
+      loadMeetingExtremes,
+      loadWeeklyExtremes,
+      loadWeeklyAverages,
+      loadTopContacts,
+      loadInterviewTime,
+    ];
+
+    async function syncCalendar(event) {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const button = document.getElementById('sync-button');
+      const status = document.getElementById('sync-status');
+      const csrfToken = form.querySelector('[name=csrfmiddlewaretoken]').value;
+
+      button.disabled = true;
+      button.textContent = 'Syncing...';
+      status.className = 'sync-status';
+      status.textContent = 'Fetching changes...';
+
+      try {
+        const response = await fetch(form.action, {
+          method: 'POST',
+          headers: {
+            'Accept': 'application/json',
+            'X-CSRFToken': csrfToken,
+          },
+        });
+        const data = await response.json();
+
+        if (!response.ok || !data.success) {
+          throw new Error(data.error || 'Calendar sync failed.');
+        }
+
+        status.className = 'sync-status success';
+        status.textContent = `Synced: ${data.created} added, ${data.updated} updated, ${data.deleted} removed.`;
+        await Promise.all(metricLoaders.map(load => load()));
+      } catch (error) {
+        status.className = 'sync-status error';
+        status.textContent = error.message || 'Calendar sync failed.';
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Sync calendar';
+      }
+    }
+
     // Load all data on page load
     document.addEventListener('DOMContentLoaded', () => {
-      loadMonthlyTime();
-      loadMeetingExtremes();
-      loadWeeklyExtremes();
-      loadWeeklyAverages();
-      loadTopContacts();
-      loadInterviewTime();
+      metricLoaders.forEach(load => load());
+      document.getElementById('sync-form').addEventListener('submit', syncCalendar);
     });
   </script>
 </body>

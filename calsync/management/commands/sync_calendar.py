@@ -17,7 +17,7 @@ USAGE:
 
 WHEN TO USE:
 - --full: First time setup, or if you suspect data is out of sync
-- (no flags): Regular sync, triggered by cron or push notifications
+- (no flags): Regular sync, also available from the dashboard
 """
 
 from django.core.management.base import BaseCommand, CommandError

@@ -3,6 +3,7 @@ Calendar Sync Views
 
 PURPOSE:
 HTTP endpoints for the calendar sync system:
+- Manual sync endpoint used by the dashboards
 - Webhook endpoint that receives Google push notifications
 - Status/info endpoints (future)
 
@@ -25,14 +26,40 @@ IMPORTANT NOTES:
 
 import logging
 
-from django.http import HttpResponse
+from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
-from .sync import handle_push_notification
+from .sync import handle_push_notification, incremental_sync
 from .watch import verify_notification_token
 
 logger = logging.getLogger(__name__)
+
+
+@require_POST
+def manual_sync(request):
+    """Synchronize the primary calendar when requested from the dashboard."""
+    result = incremental_sync("primary")
+
+    if not result.success:
+        return JsonResponse(
+            {
+                "success": False,
+                "error": result.error or "Calendar sync failed.",
+            },
+            status=502,
+        )
+
+    return JsonResponse(
+        {
+            "success": True,
+            "sync_type": "full" if result.full_sync else "incremental",
+            "created": result.created,
+            "updated": result.updated,
+            "deleted": result.deleted,
+            "total_events": result.total_events,
+        }
+    )
 
 
 @csrf_exempt  # Google can't send CSRF tokens
@@ -103,7 +130,7 @@ def webhook(request):
             )
         else:
             # Log error but still return 200 - don't want Google to retry
-            # The sync will happen on the next notification or periodic sync
+            # The sync can catch up on the next notification or manual request
             logger.error(f"Push sync failed: {result.error}")
     
     # Always return 200 to prevent retries

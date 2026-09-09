@@ -21,9 +21,10 @@ This keeps secrets out of source code. The python-dotenv library loads .env auto
 
 import os
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
 
 from dotenv import load_dotenv
+
+from config.database import database_config_from_env
 
 # =============================================================================
 # BASE DIRECTORY
@@ -154,44 +155,7 @@ ASGI_APPLICATION = "config.asgi.application"  # For async servers
 # DATABASE CONFIGURATION
 # =============================================================================
 
-def postgres_config():
-    """
-    Build PostgreSQL connection settings from environment variables.
-    
-    SUPPORTS TWO FORMATS:
-    1. DATABASE_URL (e.g., postgresql://user:pass@host:5432/dbname)
-       - Common in cloud platforms like Heroku, Railway
-    2. Discrete variables (POSTGRES_DB, POSTGRES_USER, etc.)
-       - More explicit, easier to read in .env files
-    
-    DATABASE_URL takes priority if set.
-    """
-    url = os.getenv("DATABASE_URL")
-    if not url:
-        # Use discrete environment variables
-        return {
-            "ENGINE": "django.db.backends.postgresql",
-            "NAME": os.getenv("POSTGRES_DB", "calendar_audit"),
-            "USER": os.getenv("POSTGRES_USER", ""),  # Empty = OS username
-            "PASSWORD": os.getenv("POSTGRES_PASSWORD", ""),
-            "HOST": os.getenv("POSTGRES_HOST", "localhost"),
-            "PORT": os.getenv("POSTGRES_PORT", "5432"),
-        }
-
-    # Parse DATABASE_URL
-    # Example: postgresql://myuser:mypassword@localhost:5432/mydb
-    parsed = urlsplit(url)
-    return {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": unquote(parsed.path.lstrip("/")),  # /mydb -> mydb
-        "USER": unquote(parsed.username or ""),
-        "PASSWORD": unquote(parsed.password or ""),
-        "HOST": parsed.hostname or "localhost",
-        "PORT": str(parsed.port or "5432"),
-    }
-
-
-DATABASES = {"default": postgres_config()}
+DATABASES = {"default": database_config_from_env()}
 
 
 # =============================================================================

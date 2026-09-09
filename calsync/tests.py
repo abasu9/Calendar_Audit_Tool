@@ -5,11 +5,13 @@ Tests cover:
 1. CalendarEvent model and parsing methods
 2. SyncState model
 3. WatchChannel model
-4. Webhook endpoint
+4. Manual sync endpoint
+5. Webhook endpoint
 """
 
 import uuid
 from datetime import datetime, timedelta
+from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
 from django.test import TestCase, Client
@@ -17,6 +19,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from .models import CalendarEvent, SyncState, WatchChannel
+from .sync import SyncResult
 
 
 class CalendarEventModelTests(TestCase):
@@ -265,6 +268,68 @@ class SyncStateModelTests(TestCase):
         
         with self.assertRaises(Exception):
             SyncState.objects.create(calendar_id="primary")
+
+
+class ManualSyncViewTests(TestCase):
+    """Tests for the user-requested dashboard sync endpoint."""
+
+    def setUp(self):
+        self.client = Client(enforce_csrf_checks=True)
+        self.url = reverse("manual-sync")
+
+    def test_post_required(self):
+        response = self.client.get(self.url)
+
+        self.assertEqual(response.status_code, 405)
+
+    def test_csrf_protection_is_enabled(self):
+        response = self.client.post(self.url)
+
+        self.assertEqual(response.status_code, 403)
+
+    @patch("calsync.views.incremental_sync")
+    def test_successful_sync_returns_counts(self, mock_sync):
+        mock_sync.return_value = SyncResult(
+            success=True,
+            full_sync=False,
+            created=2,
+            updated=3,
+            deleted=1,
+            total_events=24,
+        )
+        response = Client().post(self.url)
+
+        self.assertEqual(response.status_code, 200)
+        self.assertJSONEqual(
+            response.content,
+            {
+                "success": True,
+                "sync_type": "incremental",
+                "created": 2,
+                "updated": 3,
+                "deleted": 1,
+                "total_events": 24,
+            },
+        )
+        mock_sync.assert_called_once_with("primary")
+
+    @patch("calsync.views.incremental_sync")
+    def test_failed_sync_returns_error(self, mock_sync):
+        mock_sync.return_value = SyncResult(
+            success=False,
+            full_sync=False,
+            error="Google Calendar is unavailable.",
+        )
+        response = Client().post(self.url)
+
+        self.assertEqual(response.status_code, 502)
+        self.assertJSONEqual(
+            response.content,
+            {
+                "success": False,
+                "error": "Google Calendar is unavailable.",
+            },
+        )
 
 
 class WatchChannelModelTests(TestCase):

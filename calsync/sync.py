@@ -249,8 +249,8 @@ def incremental_sync(calendar_id: str = "primary") -> SyncResult:
     Perform an incremental sync - fetch only changes since last sync.
     
     WHEN TO USE:
+    - When a user requests a refresh from the dashboard
     - After a push notification indicates changes
-    - As a periodic check for missed notifications
     - Any time after the initial full sync
     
     PARAMETERS:
