@@ -118,7 +118,8 @@ def create_watch_channel(
         # Extract response data
         resource_id = response.get("resourceId", "")
         # Google may return a different expiration than requested
-        actual_expiration_ms = response.get("expiration", expiration_ms)
+        # Note: Google returns expiration as a string, need to convert to int
+        actual_expiration_ms = int(response.get("expiration", expiration_ms))
         actual_expiration = datetime.fromtimestamp(
             actual_expiration_ms / 1000,
             tz=ZoneInfo("UTC")

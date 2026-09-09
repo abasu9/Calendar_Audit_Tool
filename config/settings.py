@@ -85,6 +85,13 @@ DEBUG = env_bool("DEBUG", True)
 # Prevents HTTP Host header attacks
 ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", "localhost,127.0.0.1")
 
+# Local webhook tunnels (ngrok) change hostnames on every restart.
+# Leading-dot entries match any subdomain of that host.
+if DEBUG:
+    for _ngrok_host in (".ngrok-free.dev", ".ngrok-free.app", ".ngrok.io"):
+        if _ngrok_host not in ALLOWED_HOSTS:
+            ALLOWED_HOSTS.append(_ngrok_host)
+
 # Origins that can make cross-site requests (needed for webhooks in Phase 2)
 # Google sends push notifications to an HTTPS tunnel hostname
 CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
