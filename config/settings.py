@@ -45,6 +45,11 @@ DEBUG = env_bool("DEBUG", True)
 # Only accept requests addressed to a known hostname.
 ALLOWED_HOSTS = env_list("ALLOWED_HOSTS", "localhost,127.0.0.1")
 
+# Trust the X-Forwarded-Proto header set by Railway (and similar reverse proxies)
+# so that request.build_absolute_uri() returns https:// instead of http://.
+# This is required for the Google OAuth callback to pass oauthlib's HTTPS check.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 # In development, accept changing ngrok subdomains used by the webhook tunnel.
 if DEBUG:
     for _ngrok_host in (".ngrok-free.dev", ".ngrok-free.app", ".ngrok.io"):
