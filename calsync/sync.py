@@ -19,7 +19,7 @@ from django.utils import timezone
 from googleapiclient.errors import HttpError
 
 from googlecal.client import build_service
-from .models import CalendarEvent, SyncState, WatchChannel
+from .models import CalendarEvent, EventAttendee, SyncState, WatchChannel
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,31 @@ class SyncResult:
     deleted: int = 0
     total_events: int = 0
     error: Optional[str] = None
+
+
+def _sync_attendees(event_obj: CalendarEvent, event_data: dict, user) -> None:
+    """Replace the attendee rows for *event_obj* with those in *event_data*.
+
+    Delete-and-reinsert is simpler than diffing and is correct because an
+    event's attendee list can change between syncs. Must be called inside an
+    existing ``transaction.atomic()`` block.
+    """
+    EventAttendee.objects.filter(event=event_obj).delete()
+    rows = []
+    for attendee in (event_data.get("attendees") or []):
+        email = attendee.get("email", "")
+        if not email:
+            continue
+        rows.append(EventAttendee(
+            event=event_obj,
+            user=user,
+            email=email,
+            display_name=attendee.get("displayName", ""),
+            response_status=attendee.get("responseStatus", ""),
+            is_self=bool(attendee.get("self", False)),
+        ))
+    if rows:
+        EventAttendee.objects.bulk_create(rows)
 
 
 def full_sync(user, calendar_id: str = "primary") -> SyncResult:
@@ -110,11 +135,12 @@ def full_sync(user, calendar_id: str = "primary") -> SyncResult:
 
                 defaults = CalendarEvent.parse_google_event(event_data, calendar_id)
 
-                _, was_created = CalendarEvent.objects.update_or_create(
+                event_obj, was_created = CalendarEvent.objects.update_or_create(
                     user=user,
                     google_event_id=event_id,
                     defaults=defaults,
                 )
+                _sync_attendees(event_obj, event_data, user)
 
                 if was_created:
                     created += 1
@@ -287,11 +313,12 @@ def incremental_sync(user, calendar_id: str = "primary") -> SyncResult:
                         logger.debug("Skipping future event: %s", event_id)
                         continue
 
-                    _, was_created = CalendarEvent.objects.update_or_create(
+                    event_obj, was_created = CalendarEvent.objects.update_or_create(
                         user=user,
                         google_event_id=event_id,
                         defaults=defaults,
                     )
+                    _sync_attendees(event_obj, event_data, user)
 
                     if was_created:
                         created += 1

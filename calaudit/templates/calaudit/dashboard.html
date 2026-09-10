@@ -186,7 +186,7 @@
       font-weight: 600;
       letter-spacing: 0.08em;
     }
-    td.num {
+    td.num, th.num {
       text-align: right;
       font-variant-numeric: tabular-nums;
     }
@@ -330,19 +330,17 @@
       return n + (s[(v - 20) % 10] || s[v] || s[0]);
     }
 
-    // Describe a week by its position inside the month.
-    // The start date selects a month and its day selects the week number.
+    // Describe a week by its start date.
+    // Using the start date directly avoids misleading month labels for weeks
+    // that span two months (e.g. Aug 31 – Sep 6 is not "5th week of August").
     function formatWeekOfMonth(startDate) {
       const date = new Date(startDate + 'T00:00:00');
-      const dayOfMonth = date.getDate();
-      const weekOfMonth = Math.ceil(dayOfMonth / 7);
-      
-      const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
-                          'July', 'August', 'September', 'October', 'November', 'December'];
+      const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                          'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
       const monthName = monthNames[date.getMonth()];
+      const day = date.getDate();
       const year = date.getFullYear();
-      
-      return `${getOrdinal(weekOfMonth)} week of ${monthName} ${year}`;
+      return `Week of ${monthName} ${day}, ${year}`;
     }
 
     // Load monthly meeting totals into the first metric card.
@@ -359,7 +357,7 @@
         }
         
         let html = `<h2>Monthly Meeting Time</h2><table>
-          <thead><tr><th>Month</th><th class="num">Hours</th></tr></thead><tbody>`;
+          <thead><tr><th>Month</th><th class="num">Duration</th></tr></thead><tbody>`;
         
         data.data.forEach(row => {
           html += `<tr><td>${row.label}</td><td class="num">${formatHours(row.total_hours)}</td></tr>`;
@@ -491,7 +489,7 @@
         }
         
         let html = `<h2>Top Meeting Contacts</h2><table>
-          <thead><tr><th>Contact</th><th class="num">Meetings</th><th class="num">Hours</th></tr></thead><tbody>`;
+          <thead><tr><th>Contact</th><th class="num">Meetings</th><th class="num">Duration</th></tr></thead><tbody>`;
         
         data.top_contacts.forEach(contact => {
           // Prefer a saved display name and keep the email as supporting text.
@@ -533,33 +531,11 @@
           return;
         }
         
-        let html = `<h2>Recruiting / Interview Time</h2>
+        const html = `<h2>Recruiting / Interview Time</h2>
           <div class="big-stat">
             <div class="number">${formatHours(data.total_hours)}</div>
             <div class="label">${data.total_meetings} interview meeting${data.total_meetings !== 1 ? 's' : ''}</div>
           </div>`;
-        
-        if (data.matching_events.length > 0) {
-          html += `<table>
-            <thead><tr><th>Date</th><th>Event</th><th class="num">Min</th></tr></thead><tbody>`;
-          
-          data.matching_events.slice(0, 5).forEach(event => {
-            const summary = event.summary.length > 30 ? event.summary.substring(0, 27) + '...' : event.summary;
-            html += `<tr>
-              <td>${event.date}</td>
-              <td title="${event.summary}">${summary}</td>
-              <td class="num">${event.duration_minutes}</td>
-            </tr>`;
-          });
-          
-          if (data.matching_events.length > 5) {
-            html += `<tr><td colspan="3" style="text-align:center;color:var(--text-muted)">
-              +${data.matching_events.length - 5} more
-            </td></tr>`;
-          }
-          
-          html += '</tbody></table>';
-        }
         
         card.innerHTML = html;
       } catch (e) {

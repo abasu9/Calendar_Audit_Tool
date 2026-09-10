@@ -9,11 +9,11 @@ user's events so data from different accounts never mixes.
 """
 
 from datetime import timedelta
-from django.db.models import Count, Sum
+from django.db.models import Count, Max, Sum
 from django.db.models.functions import TruncMonth, TruncWeek
 from django.utils import timezone
 
-from calsync.models import CalendarEvent
+from calsync.models import CalendarEvent, EventAttendee
 
 
 def get_monthly_meeting_time(user, months: int = 3) -> list[dict]:
@@ -255,63 +255,45 @@ def get_weekly_averages(user, months: int = 3) -> dict:
 def get_top_contacts(user, months: int = 3, limit: int = 3) -> dict:
     """Return the people who appear most often in *user*'s recent meetings.
 
-    Attendees are read from each event's saved Google JSON because they are not
-    separate database rows. The calendar owner is skipped, counts and minutes are
-    combined by email, and contacts are sorted before the requested limit is applied.
+    Attendees are queried from the ``EventAttendee`` table as a single indexed
+    aggregate — no JSON parsing, no Python loops over event rows. The calendar
+    owner (``is_self=True``) is excluded at the database level. Contacts are
+    ranked by meeting count descending, then by total shared minutes descending
+    to break ties, and the requested limit is applied to the sorted result.
     """
-    from collections import defaultdict
-
     cutoff = timezone.now() - timedelta(days=months * 30)
 
-    events = CalendarEvent.objects.filter(
-        user=user,
-        start_time__gte=cutoff,
-        all_day=False,
-        status="confirmed",
+    rows = (
+        EventAttendee.objects
+        .filter(
+            user=user,
+            is_self=False,
+            event__start_time__gte=cutoff,
+            event__all_day=False,
+            event__status="confirmed",
+        )
+        .values("email")
+        .annotate(
+            meeting_count=Count("event_id"),
+            total_minutes=Sum("event__duration_minutes"),
+            name=Max("display_name"),
+        )
+        .order_by("-meeting_count", "-total_minutes")
     )
-
-    contacts = defaultdict(lambda: {"name": "", "meeting_count": 0, "total_minutes": 0})
-
-    for event in events:
-        raw_json = event.raw_json or {}
-        attendees = raw_json.get("attendees", [])
-        duration = event.duration_minutes or 0
-
-        for attendee in attendees:
-            email = attendee.get("email", "")
-            if not email:
-                continue
-
-            # Do not report the calendar owner as their own contact.
-            if attendee.get("self", False):
-                continue
-
-            contacts[email]["meeting_count"] += 1
-            contacts[email]["total_minutes"] += duration
-
-            # Keep the first available name for a stable display value.
-            display_name = attendee.get("displayName", "")
-            if display_name and not contacts[email]["name"]:
-                contacts[email]["name"] = display_name
 
     all_contacts = [
         {
-            "email": email,
-            "name": data["name"],
-            "meeting_count": data["meeting_count"],
-            "total_minutes": data["total_minutes"],
-            "total_hours": round(data["total_minutes"] / 60, 2),
+            "email": row["email"],
+            "name": row["name"] or "",
+            "meeting_count": row["meeting_count"],
+            "total_minutes": row["total_minutes"] or 0,
+            "total_hours": round((row["total_minutes"] or 0) / 60, 2),
         }
-        for email, data in contacts.items()
+        for row in rows
     ]
 
-    # Break equal meeting counts by their total shared meeting time.
-    all_contacts.sort(key=lambda x: (-x["meeting_count"], -x["total_minutes"]))
-
-    top_contacts = all_contacts[:limit]
-
     return {
-        "top_contacts": top_contacts,
+        "top_contacts": all_contacts[:limit],
         "all_contacts": all_contacts,
     }
 

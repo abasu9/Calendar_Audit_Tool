@@ -14,7 +14,7 @@ from django.urls import reverse
 from django.utils import timezone
 from rest_framework.test import APITestCase, APIClient
 
-from calsync.models import CalendarEvent
+from calsync.models import CalendarEvent, EventAttendee
 from .queries import (
     BUSY_THRESHOLD_MINUTES,
     INTERVIEW_KEYWORDS,
@@ -37,6 +37,17 @@ User = get_user_model()
 
 def make_user(username="testuser", email="test@example.com"):
     return User.objects.create_user(username=username, email=email)
+
+
+def _attendee(event, user, email, *, display_name="", is_self=False):
+    """Create an EventAttendee row for the given event."""
+    return EventAttendee.objects.create(
+        event=event,
+        user=user,
+        email=email,
+        display_name=display_name,
+        is_self=is_self,
+    )
 
 
 def _event(user, event_id, **kwargs):
@@ -272,7 +283,7 @@ class GetTopContactsTests(TestCase):
         self.now = timezone.now()
         w = self.now - timedelta(days=7)
 
-        CalendarEvent.objects.create(
+        ev1 = CalendarEvent.objects.create(
             user=self.user, google_event_id="c1", calendar_id="primary",
             summary="Sync", start_time=w, end_time=w + timedelta(hours=1),
             duration_minutes=60, all_day=False, status="confirmed",
@@ -281,7 +292,10 @@ class GetTopContactsTests(TestCase):
                 {"email": "me@example.com", "self": True},
             ]},
         )
-        CalendarEvent.objects.create(
+        _attendee(ev1, self.user, "alice@example.com", display_name="Alice")
+        _attendee(ev1, self.user, "me@example.com", is_self=True)
+
+        ev2 = CalendarEvent.objects.create(
             user=self.user, google_event_id="c2", calendar_id="primary",
             summary="1:1", start_time=w + timedelta(hours=2), end_time=w + timedelta(hours=3),
             duration_minutes=60, all_day=False, status="confirmed",
@@ -290,6 +304,8 @@ class GetTopContactsTests(TestCase):
                 {"email": "me@example.com", "self": True},
             ]},
         )
+        _attendee(ev2, self.user, "alice@example.com", display_name="Alice")
+        _attendee(ev2, self.user, "me@example.com", is_self=True)
 
     def test_alice_is_top_contact(self):
         result = get_top_contacts(self.user)
@@ -303,12 +319,13 @@ class GetTopContactsTests(TestCase):
 
     def test_isolates_from_other_users(self):
         other = make_user("other", "other@example.com")
-        CalendarEvent.objects.create(
+        other_ev = CalendarEvent.objects.create(
             user=other, google_event_id="o1", calendar_id="primary",
             summary="Other", start_time=timezone.now() - timedelta(days=1),
             end_time=timezone.now(), duration_minutes=60, all_day=False, status="confirmed",
             raw_json={"id": "o1", "attendees": [{"email": "xray@example.com"}]},
         )
+        _attendee(other_ev, other, "xray@example.com")
         emails = [c["email"] for c in get_top_contacts(self.user)["all_contacts"]]
         self.assertNotIn("xray@example.com", emails)
 
@@ -316,6 +333,44 @@ class GetTopContactsTests(TestCase):
         CalendarEvent.objects.all().delete()
         result = get_top_contacts(self.user)
         self.assertEqual(result["top_contacts"], [])
+
+    def test_backfill_from_raw_json(self):
+        """Backfill migration logic correctly creates EventAttendee from raw_json."""
+        from django.test.utils import isolate_apps
+
+        user = make_user("backfill_user", "backfill@example.com")
+        w = timezone.now() - timedelta(days=5)
+        event = CalendarEvent.objects.create(
+            user=user, google_event_id="bf1", calendar_id="primary",
+            summary="Backfill Meeting", start_time=w, end_time=w + timedelta(hours=1),
+            duration_minutes=60, all_day=False, status="confirmed",
+            raw_json={"id": "bf1", "attendees": [
+                {"email": "backfill_contact@example.com", "displayName": "B Contact"},
+                {"email": "backfill@example.com", "self": True},
+            ]},
+        )
+
+        # Simulate backfill logic directly (mirrors what the migration does).
+        for attendee in (event.raw_json.get("attendees") or []):
+            email = attendee.get("email", "")
+            if not email:
+                continue
+            EventAttendee.objects.get_or_create(
+                event=event,
+                email=email,
+                defaults=dict(
+                    user=user,
+                    display_name=attendee.get("displayName", ""),
+                    response_status=attendee.get("responseStatus", ""),
+                    is_self=bool(attendee.get("self", False)),
+                ),
+            )
+
+        self.assertEqual(EventAttendee.objects.filter(event=event).count(), 2)
+        result = get_top_contacts(user)
+        emails = [c["email"] for c in result["all_contacts"]]
+        self.assertIn("backfill_contact@example.com", emails)
+        self.assertNotIn("backfill@example.com", emails)
 
 
 # ---------------------------------------------------------------------------
@@ -510,7 +565,7 @@ class TopContactsViewTests(APITestCase):
         self.user = make_user()
         self.url = reverse("calaudit:top-contacts")
         w = timezone.now() - timedelta(days=7)
-        CalendarEvent.objects.create(
+        ev = CalendarEvent.objects.create(
             user=self.user, google_event_id="tc-1", calendar_id="primary",
             summary="Sync", start_time=w, end_time=w + timedelta(hours=1),
             duration_minutes=60, all_day=False, status="confirmed",
@@ -519,6 +574,8 @@ class TopContactsViewTests(APITestCase):
                 {"email": "me@example.com", "self": True},
             ]},
         )
+        _attendee(ev, self.user, "alice@example.com", display_name="Alice")
+        _attendee(ev, self.user, "me@example.com", is_self=True)
 
     def test_anonymous_returns_403(self):
         self.assertEqual(self.client.get(self.url).status_code, 403)

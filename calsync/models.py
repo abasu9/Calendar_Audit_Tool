@@ -244,6 +244,61 @@ class CalendarEvent(models.Model):
         }
 
 
+class EventAttendee(models.Model):
+    """Represent one attendee on a synced calendar event.
+
+    Attendees are stored as first-class rows so the top-contacts query can run
+    as a single indexed aggregate instead of loading raw JSON into Python. The
+    ``user`` FK is denormalized here so contact queries never need to join back
+    through ``CalendarEvent`` just to apply the user filter.
+
+    ``is_self`` marks the calendar owner so they can be excluded from their own
+    contact reports.
+    """
+
+    event = models.ForeignKey(
+        CalendarEvent,
+        on_delete=models.CASCADE,
+        related_name="attendees",
+        help_text="Event this attendee belongs to",
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        related_name="event_attendees",
+        help_text="Owner of the calendar (denormalized for query performance)",
+    )
+    email = models.CharField(
+        max_length=255,
+        help_text="Attendee's email address",
+    )
+    display_name = models.CharField(
+        max_length=255,
+        blank=True,
+        default="",
+        help_text="Attendee's display name from Google",
+    )
+    response_status = models.CharField(
+        max_length=50,
+        blank=True,
+        default="",
+        help_text="RSVP status (accepted / declined / tentative / needsAction)",
+    )
+    is_self = models.BooleanField(
+        default=False,
+        help_text="True when this attendee is the calendar owner",
+    )
+
+    class Meta:
+        """Prevent duplicate attendee rows and index the contact-query path."""
+
+        unique_together = [("event", "email")]
+        indexes = [models.Index(fields=["user", "email"])]
+
+    def __str__(self):
+        return f"{self.email} on {self.event_id}"
+
+
 class SyncState(models.Model):
     """Remember incremental sync progress for one calendar belonging to one user.
 
