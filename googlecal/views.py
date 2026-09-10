@@ -1,8 +1,10 @@
-"""Render the main dashboard and handle Google OAuth redirects.
+"""Render the main dashboard and handle Google OAuth sign-in.
 
-The dashboard shows a connection action until credentials exist, then loads a
-seven-day calendar preview. The other views start authorization and turn Google's
-callback code into saved credentials.
+The dashboard shows a sign-in prompt for anonymous visitors, and a calendar
+preview for authenticated users. The OAuth start and callback views implement
+Google Sign-In: after consent, the callback creates or retrieves the Django user,
+logs them in, saves their credentials to the database, and kicks off the
+background bootstrap (full sync + push channel registration).
 """
 
 import datetime
@@ -10,35 +12,43 @@ import logging
 from zoneinfo import ZoneInfo
 
 from django.conf import settings
+from django.contrib.auth import login, logout
+from django.contrib.auth import get_user_model
 from django.shortcuts import redirect, render
 from django.urls import reverse
 from googleapiclient.errors import HttpError
 
 from googlecal.client import GoogleAuthError, build_service, load_credentials, save_credentials
-from googlecal.oauth import OAuthConfigError, authorization_url, fetch_credentials
+from googlecal.oauth import OAuthConfigError, authorization_url, fetch_credentials, verify_id_token
 
 logger = logging.getLogger(__name__)
+User = get_user_model()
 
 # Keep the landing-page preview short and useful.
 PREVIEW_DAYS = 7
 
 
 def dashboard(request):
-    """Show connection status and an upcoming primary-calendar preview.
+    """Show sign-in prompt for anonymous visitors; calendar preview for authenticated users."""
+    if request.user.is_anonymous:
+        return render(
+            request,
+            "googlecal/dashboard.html",
+            {
+                "authorized": False,
+                "redirect_uri": settings.GOOGLE_OAUTH_REDIRECT_URI,
+                "scopes": settings.GOOGLE_OAUTH_SCOPES,
+            },
+        )
 
-    The view loads credentials without opening a browser. Connected users receive
-    calendar details, formatted events, and total meeting minutes; configuration
-    or API failures are placed in the template context for a readable page.
-    """
     context = {
-        "redirect_uri": settings.GOOGLE_OAUTH_REDIRECT_URI,
-        "scopes": settings.GOOGLE_OAUTH_SCOPES,
-        "preview_days": PREVIEW_DAYS,
         "authorized": False,
+        "user_email": request.user.email,
+        "preview_days": PREVIEW_DAYS,
     }
 
     try:
-        credentials = load_credentials()
+        credentials = load_credentials(request.user)
     except GoogleAuthError as exc:
         context["notice"] = str(exc)
         return render(request, "googlecal/dashboard.html", context)
@@ -68,11 +78,7 @@ def dashboard(request):
 
 
 def oauth_start(request):
-    """Start OAuth by redirecting the browser to Google's consent page.
-
-    ``authorization_url`` also saves state and PKCE data in the session. Invalid
-    client configuration is rendered on the dashboard instead of redirecting.
-    """
+    """Start OAuth by redirecting the browser to Google's consent page."""
     try:
         return redirect(authorization_url(request))
     except OAuthConfigError as exc:
@@ -85,12 +91,7 @@ def oauth_start(request):
 
 
 def oauth_callback(request):
-    """Finish OAuth after Google redirects the browser back.
-
-    Provider errors are shown directly. A successful callback validates the session,
-    exchanges the authorization code, saves credentials, and returns the user to the
-    dashboard.
-    """
+    """Finish OAuth: identify the user, create their account, log them in, and bootstrap."""
     if error := request.GET.get("error"):
         description = request.GET.get("error_description", "")
         return render(
@@ -106,7 +107,7 @@ def oauth_callback(request):
         return render(
             request, "googlecal/dashboard.html", {"error": str(exc)}, status=400
         )
-    except Exception as exc:  # noqa: BLE001 - surface the provider's message
+    except Exception as exc:  # noqa: BLE001
         logger.exception("Token exchange failed")
         return render(
             request,
@@ -115,27 +116,85 @@ def oauth_callback(request):
             status=400,
         )
 
-    save_credentials(credentials)
-    logger.info("Stored Google credentials at %s", settings.GOOGLE_TOKEN_FILE)
+    try:
+        identity = verify_id_token(credentials)
+    except OAuthConfigError as exc:
+        return render(
+            request,
+            "googlecal/dashboard.html",
+            {"error": str(exc)},
+            status=400,
+        )
+
+    user = _resolve_user(identity)
+    login(request, user, backend="django.contrib.auth.backends.ModelBackend")
+    save_credentials(user, credentials, identity=identity)
+    logger.info("User %s signed in via Google (%s)", user.username, identity["email"])
 
     from calsync.bootstrap import start_bootstrap
-    start_bootstrap("primary")
+    start_bootstrap(user_id=user.id)
 
     return redirect(reverse("dashboard"))
 
 
-def _upcoming_events(service, days):
-    """Return every primary-calendar event in the next number of days.
+def logout_view(request):
+    """Sign out the current user and redirect to the dashboard."""
+    logout(request)
+    return redirect(reverse("dashboard"))
 
-    The helper expands recurring rules, requests chronological results, and follows
-    page tokens until Google's full response window has been collected.
+
+def _resolve_user(identity: dict):
+    """Return the Django user matching *identity*, creating one when needed.
+
+    Looks up an existing ``GoogleCredential`` by ``google_sub`` first — this
+    handles every subsequent sign-in with zero ambiguity. Falls back to matching
+    on email in case an account was created before ``google_sub`` was stored.
+    Creates a new user when no match is found.
     """
+    from googlecal.models import GoogleCredential
+
+    sub = identity["sub"]
+    email = identity.get("email", "")
+
+    # Fastest path: credential row already links sub to a Django user.
+    try:
+        return GoogleCredential.objects.get(google_sub=sub).user
+    except GoogleCredential.DoesNotExist:
+        pass
+
+    # Email fallback: a user whose account predates google_sub storage.
+    if email:
+        try:
+            return User.objects.get(email=email)
+        except User.DoesNotExist:
+            pass
+
+    # New user: derive a username from the email local-part; ensure uniqueness.
+    base_username = (email.split("@")[0] if email else sub)[:150]
+    username = base_username
+    counter = 1
+    while User.objects.filter(username=username).exists():
+        username = f"{base_username}{counter}"
+        counter += 1
+
+    user = User.objects.create_user(
+        username=username,
+        email=email,
+    )
+    user.set_unusable_password()
+    user.save()
+    logger.info("Created new user %s (%s)", username, email)
+    return user
+
+
+def _upcoming_events(service, days):
+    """Return every primary-calendar event in the next number of days."""
     now = datetime.datetime.now(tz=datetime.timezone.utc)
     time_max = now + datetime.timedelta(days=days)
 
     events = []
     page_token = None
-    
+
     while True:
         response = (
             service.events()
@@ -157,11 +216,7 @@ def _upcoming_events(service, days):
 
 
 def _duration_minutes(event):
-    """Return a timed event's whole-minute duration.
-
-    Google all-day items have dates instead of datetimes and return zero because
-    the dashboard counts meeting time rather than calendar-day coverage.
-    """
+    """Return a timed event's whole-minute duration; zero for all-day events."""
     start_raw = event["start"].get("dateTime")
     if start_raw is None:
         return 0
@@ -171,12 +226,7 @@ def _duration_minutes(event):
 
 
 def _present(event, tz):
-    """Convert one Google event into values used by the dashboard template.
-
-    Titles and meeting details are copied into a small dictionary. All-day events
-    keep their date; timed events are converted to the report timezone and receive
-    a readable start-to-end label.
-    """
+    """Convert one Google event into values used by the dashboard template."""
     start_raw = event["start"].get("dateTime")
     attendees = event.get("attendees") or []
 

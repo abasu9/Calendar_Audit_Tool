@@ -139,9 +139,6 @@ def project_path(name, default):
 # OAuth client configuration downloaded from Google Cloud.
 GOOGLE_CREDENTIALS_FILE = project_path("GOOGLE_CREDENTIALS_FILE", "credentials.json")
 
-# User access and refresh tokens saved after authorization.
-GOOGLE_TOKEN_FILE = project_path("GOOGLE_TOKEN_FILE", "token.json")
-
 # Request identity details plus read-only calendar access.
 GOOGLE_OAUTH_SCOPES = [
     "openid",
@@ -161,6 +158,9 @@ if DEBUG and GOOGLE_OAUTH_REDIRECT_URI.startswith("http://"):
 # Accept Google's equivalent identity-scope names and ordering.
 os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
+
+# Redirect anonymous users to the Google sign-in flow.
+LOGIN_URL = "/oauth2/start/"
 
 # Public HTTPS base URL used to build the Google Calendar webhook callback.
 # In production set this to your domain, e.g. https://app.example.com

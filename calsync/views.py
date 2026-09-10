@@ -7,6 +7,7 @@ actual changes because notification bodies contain no event data.
 
 import logging
 
+from django.contrib.auth.decorators import login_required
 from django.http import HttpResponse, JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
@@ -17,6 +18,7 @@ from .watch import ensure_watch_channel, verify_notification_token
 logger = logging.getLogger(__name__)
 
 
+@login_required
 @require_POST
 def manual_sync(request):
     """Synchronize the primary calendar after a dashboard request.
@@ -24,7 +26,7 @@ def manual_sync(request):
     The standard incremental engine runs immediately and falls back to a full sync
     when needed. Its success state and row counts are returned as JSON.
     """
-    result = incremental_sync("primary")
+    result = incremental_sync(request.user, "primary")
 
     if not result.success:
         return JsonResponse(
@@ -38,7 +40,7 @@ def manual_sync(request):
     # Opportunistic channel renewal: a cheap DB check that only calls Google
     # when the channel is near expiry or missing. Runs after sync so it does
     # not delay the JSON response on the happy path.
-    ensure_watch_channel("primary")
+    ensure_watch_channel(request.user, "primary")
 
     return JsonResponse(
         {

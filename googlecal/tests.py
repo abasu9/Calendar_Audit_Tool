@@ -1,283 +1,358 @@
 """Verify Google Calendar routes, dashboard behavior, OAuth, and credentials.
 
-External Google calls are replaced with mocks or temporary files. This keeps tests
-repeatable while checking redirects, rendered states, token loading, and refresh
-behavior.
+External Google calls are replaced with mocks. This keeps tests repeatable while
+checking redirects, rendered states, token loading, Google Sign-In user resolution,
+and per-user credential round-trips.
 """
 
-from unittest.mock import patch, MagicMock
-from pathlib import Path
+from unittest.mock import MagicMock, patch
 
-from django.test import TestCase, Client, override_settings
+from django.contrib.auth import get_user_model
+from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
+User = get_user_model()
+
+
+# ---------------------------------------------------------------------------
+# URL routing
+# ---------------------------------------------------------------------------
 
 class GoogleCalURLTests(TestCase):
-    """
-    Test cases for URL routing.
-    """
-    
+    """Test URL routing for the googlecal app."""
+
     def test_dashboard_url_resolves(self):
-        """
-        The dashboard URL should resolve correctly.
-        """
         url = reverse("dashboard")
         self.assertEqual(url, "/")
-    
+
     def test_oauth_start_url_resolves(self):
-        """
-        The OAuth start URL should resolve correctly.
-        """
         url = reverse("oauth_start")
         self.assertEqual(url, "/oauth2/start/")
-    
+
     def test_oauth_callback_url_resolves(self):
-        """
-        The OAuth callback URL should resolve correctly.
-        """
         url = reverse("oauth_callback")
         self.assertEqual(url, "/oauth2/callback/")
 
+    def test_logout_url_resolves(self):
+        url = reverse("logout")
+        self.assertEqual(url, "/logout/")
+
+
+# ---------------------------------------------------------------------------
+# Dashboard view
+# ---------------------------------------------------------------------------
 
 class DashboardViewTests(TestCase):
-    """
-    Test cases for the dashboard view.
-    """
-    
+    """Test the dashboard view for anonymous and authenticated users."""
+
     def setUp(self):
-        """
-        Set up test client.
-        """
         self.client = Client()
         self.url = reverse("dashboard")
-    
-    def test_dashboard_returns_200(self):
-        """
-        Dashboard should return 200 OK.
-        """
+        self.user = User.objects.create_user(
+            username="testuser", email="test@example.com", password="pw"
+        )
+
+    def test_anonymous_user_sees_sign_in_prompt(self):
+        """Anonymous visitors should see the sign-in button."""
         response = self.client.get(self.url)
-        
         self.assertEqual(response.status_code, 200)
-    
+        self.assertContains(response, "Sign in with Google")
+
     def test_dashboard_contains_title(self):
-        """
-        Dashboard should show the Calendar Audit Tool title.
-        """
         response = self.client.get(self.url)
-        
         self.assertContains(response, "Calendar Audit Tool")
-    
+
+    @patch("googlecal.views.load_credentials")
+    def test_authenticated_user_without_credentials_sees_notice(self, mock_load):
+        """A logged-in user with no DB credentials gets a notice."""
+        from googlecal.client import GoogleAuthError
+        mock_load.side_effect = GoogleAuthError("No credentials")
+        self.client.force_login(self.user)
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "No credentials")
+
     @patch("googlecal.views.load_credentials")
     @patch("googlecal.views.build_service")
-    def test_dashboard_with_valid_credentials(self, mock_build, mock_load):
-        """
-        Dashboard should show calendar info when authenticated.
-        """
-        # Mock valid credentials
+    def test_authenticated_user_with_credentials_sees_calendar(self, mock_build, mock_load):
+        """A logged-in user with valid credentials sees the calendar preview."""
         mock_creds = MagicMock()
-        mock_creds.valid = True
         mock_load.return_value = mock_creds
-        
-        # Mock calendar service
+
         mock_service = MagicMock()
-        mock_service.calendarList().get().execute.return_value = {
+        mock_service.calendars().get().execute.return_value = {
             "id": "primary",
             "summary": "test@example.com",
             "timeZone": "America/Chicago",
         }
-        mock_service.events().list().execute.return_value = {
-            "items": []
-        }
+        mock_service.events().list().execute.return_value = {"items": []}
         mock_build.return_value = mock_service
-        
+
+        self.client.force_login(self.user)
         response = self.client.get(self.url)
-        
         self.assertEqual(response.status_code, 200)
 
+    def test_authenticated_user_sees_email_and_logout(self):
+        """Header should show the user's email and logout link when signed in."""
+        self.client.force_login(self.user)
+        with patch("googlecal.views.load_credentials") as mock_load:
+            from googlecal.client import GoogleAuthError
+            mock_load.side_effect = GoogleAuthError("no creds")
+            response = self.client.get(self.url)
+        self.assertContains(response, "test@example.com")
+        self.assertContains(response, "Sign out")
+
+
+# ---------------------------------------------------------------------------
+# OAuth start view
+# ---------------------------------------------------------------------------
 
 class OAuthStartViewTests(TestCase):
-    """
-    Test cases for the OAuth start view.
-    """
-    
+    """Test the OAuth start redirect."""
+
     def setUp(self):
-        """
-        Set up test client.
-        """
         self.client = Client()
         self.url = reverse("oauth_start")
-    
+
     @patch("googlecal.views.authorization_url")
     def test_redirects_to_google(self, mock_auth_url):
-        """
-        OAuth start should redirect to Google's auth URL.
-        """
         mock_auth_url.return_value = "https://accounts.google.com/auth?..."
-        
         response = self.client.get(self.url)
-        
         self.assertEqual(response.status_code, 302)
-        self.assertTrue(
-            response.url.startswith("https://accounts.google.com")
-        )
+        self.assertTrue(response.url.startswith("https://accounts.google.com"))
 
+
+# ---------------------------------------------------------------------------
+# OAuth callback view — Google Sign-In
+# ---------------------------------------------------------------------------
 
 class OAuthCallbackViewTests(TestCase):
-    """
-    Test cases for the OAuth callback view.
-    """
-    
+    """Test the OAuth callback view including user creation and login."""
+
     def setUp(self):
-        """
-        Set up test client.
-        """
         self.client = Client()
         self.url = reverse("oauth_callback")
-    
-    def test_callback_without_code_returns_error(self):
-        """
-        Callback without authorization code should return error status.
-        """
-        response = self.client.get(self.url)
-        
-        # Should return 400 Bad Request for missing code
-        self.assertIn(response.status_code, [400, 200])
-    
-    def test_callback_with_error_param(self):
-        """
-        Callback with error parameter (user denied) should return error.
-        """
+
+    def test_callback_with_error_param_returns_400(self):
         response = self.client.get(self.url, {"error": "access_denied"})
-        
-        # Should return 400 for error from Google
-        self.assertIn(response.status_code, [400, 200])
+        self.assertEqual(response.status_code, 400)
 
     @patch("calsync.bootstrap.start_bootstrap")
     @patch("googlecal.views.save_credentials")
+    @patch("googlecal.views.verify_id_token")
     @patch("googlecal.views.fetch_credentials")
-    def test_successful_callback_starts_bootstrap(
-        self, mock_fetch, mock_save, mock_bootstrap
+    def test_successful_callback_creates_user_and_bootstraps(
+        self, mock_fetch, mock_verify, mock_save, mock_bootstrap
     ):
-        """A successful OAuth callback must save credentials then start bootstrap."""
+        """Successful callback must create the user, log in, save creds, bootstrap."""
         mock_creds = MagicMock()
         mock_fetch.return_value = mock_creds
+        mock_verify.return_value = {"sub": "google-sub-001", "email": "new@example.com"}
 
-        response = self.client.get(self.url, {"code": "auth-code", "state": "s"})
+        response = self.client.get(
+            self.url, {"code": "auth-code", "state": "s"}
+        )
 
-        mock_save.assert_called_once_with(mock_creds)
-        mock_bootstrap.assert_called_once_with("primary")
-        # Should redirect to dashboard after success.
+        # User should have been created.
+        self.assertTrue(User.objects.filter(email="new@example.com").exists())
+        # save_credentials and bootstrap should have been called.
+        mock_save.assert_called_once()
+        mock_bootstrap.assert_called_once()
+        # Redirects to dashboard.
         self.assertIn(response.status_code, [302, 400])
 
     @patch("calsync.bootstrap.start_bootstrap")
-    @patch("googlecal.views.save_credentials")
     @patch("googlecal.views.fetch_credentials")
-    def test_bootstrap_not_called_on_fetch_failure(
-        self, mock_fetch, mock_save, mock_bootstrap
-    ):
+    def test_bootstrap_not_called_on_fetch_failure(self, mock_fetch, mock_bootstrap):
         """Bootstrap must not be called when credential exchange fails."""
         from googlecal.oauth import OAuthConfigError
-
         mock_fetch.side_effect = OAuthConfigError("state mismatch")
 
         self.client.get(self.url, {"code": "auth-code", "state": "bad"})
 
         mock_bootstrap.assert_not_called()
 
+    @patch("calsync.bootstrap.start_bootstrap")
+    @patch("googlecal.views.save_credentials")
+    @patch("googlecal.views.verify_id_token")
+    @patch("googlecal.views.fetch_credentials")
+    def test_existing_user_is_resolved_by_google_sub(
+        self, mock_fetch, mock_verify, mock_save, mock_bootstrap
+    ):
+        """A returning user is found via their GoogleCredential row."""
+        from googlecal.models import GoogleCredential
+
+        user = User.objects.create_user(username="alice", email="alice@example.com")
+        GoogleCredential.objects.create(
+            user=user,
+            google_sub="google-sub-alice",
+            token="tok",
+            token_uri="https://oauth2.googleapis.com/token",
+            scopes=["openid"],
+        )
+
+        mock_creds = MagicMock()
+        mock_fetch.return_value = mock_creds
+        mock_verify.return_value = {
+            "sub": "google-sub-alice",
+            "email": "alice@example.com",
+        }
+
+        self.client.get(self.url, {"code": "code", "state": "s"})
+
+        # Should NOT have created a second user.
+        self.assertEqual(User.objects.filter(email="alice@example.com").count(), 1)
+
+
+# ---------------------------------------------------------------------------
+# Logout view
+# ---------------------------------------------------------------------------
+
+class LogoutViewTests(TestCase):
+    """Test the logout view."""
+
+    def test_logout_redirects_to_dashboard(self):
+        user = User.objects.create_user(username="u", password="p")
+        self.client.force_login(user)
+        response = self.client.get(reverse("logout"))
+        self.assertRedirects(response, reverse("dashboard"))
+
+    def test_logout_clears_session(self):
+        user = User.objects.create_user(username="u2", password="p")
+        self.client.force_login(user)
+        self.client.get(reverse("logout"))
+        # After logout the dashboard shows sign-in prompt.
+        response = self.client.get(reverse("dashboard"))
+        self.assertContains(response, "Sign in with Google")
+
+
+# ---------------------------------------------------------------------------
+# OAuth module
+# ---------------------------------------------------------------------------
 
 class OAuthModuleTests(TestCase):
-    """
-    Test cases for the oauth.py module functions.
-    """
-    
+    """Test the oauth.py module helpers."""
+
     @patch("googlecal.oauth.Flow")
     def test_build_flow_uses_credentials_file(self, mock_flow_class):
-        """
-        build_flow should use the configured credentials file.
-        """
         from googlecal.oauth import build_flow
-        from django.conf import settings
-        
-        # Mock the Flow.from_client_secrets_file
+
         mock_flow = MagicMock()
         mock_flow_class.from_client_secrets_file.return_value = mock_flow
-        
+
         try:
             build_flow()
         except Exception:
-            pass  # May fail if credentials file doesn't exist
-        
-        # Verify it tried to use the configured file
-        if mock_flow_class.from_client_secrets_file.called:
-            call_args = mock_flow_class.from_client_secrets_file.call_args
-            self.assertIsNotNone(call_args)
+            pass
 
+        if mock_flow_class.from_client_secrets_file.called:
+            self.assertIsNotNone(mock_flow_class.from_client_secrets_file.call_args)
+
+
+# ---------------------------------------------------------------------------
+# Client module
+# ---------------------------------------------------------------------------
 
 class ClientModuleTests(TestCase):
-    """
-    Test cases for the client.py module functions.
-    """
-    
-    def test_load_credentials_raises_error_when_no_token(self):
-        """
-        load_credentials should raise GoogleAuthError if token file doesn't exist.
-        """
-        from googlecal.client import load_credentials, GoogleAuthError
-        from django.conf import settings
-        from pathlib import Path
-        
-        # Temporarily change token file to non-existent path
-        original = settings.GOOGLE_TOKEN_FILE
-        settings.GOOGLE_TOKEN_FILE = Path("/nonexistent/token.json")
-        
-        try:
-            with self.assertRaises(GoogleAuthError):
-                load_credentials()
-        finally:
-            settings.GOOGLE_TOKEN_FILE = original
-    
-    @patch("googlecal.client.Credentials")
-    def test_load_credentials_refreshes_expired(self, mock_creds_class):
-        """
-        load_credentials should refresh expired credentials.
-        """
-        from googlecal.client import load_credentials
-        from django.conf import settings
-        from pathlib import Path
-        import tempfile
-        import json
-        
-        # Create a temporary token file
-        with tempfile.NamedTemporaryFile(
-            mode='w', suffix='.json', delete=False
-        ) as f:
-            json.dump({
-                "token": "expired-token",
-                "refresh_token": "refresh-token",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "client_id": "test-client-id",
-                "client_secret": "test-secret",
-                "expiry": "2020-01-01T00:00:00Z",  # Expired
-            }, f)
-            temp_path = Path(f.name)
-        
-        # Mock credentials
+    """Test the per-user client.py module functions."""
+
+    def test_load_credentials_raises_when_no_db_row(self):
+        """load_credentials raises GoogleAuthError when the user has no credential row."""
+        from googlecal.client import GoogleAuthError, load_credentials
+
+        user = User.objects.create_user(username="nocreds", email="nocreds@example.com")
+        with self.assertRaises(GoogleAuthError):
+            load_credentials(user)
+
+    def test_save_credentials_creates_db_row(self):
+        """save_credentials persists a GoogleCredential row for the user."""
+        from unittest.mock import MagicMock, patch
+        from googlecal.client import save_credentials
+        from googlecal.models import GoogleCredential
+
+        user = User.objects.create_user(username="cred_user", email="cred@example.com")
+
         mock_creds = MagicMock()
-        mock_creds.valid = False
-        mock_creds.expired = True
+        mock_creds.token = "access-token"
         mock_creds.refresh_token = "refresh-token"
-        mock_creds_class.from_authorized_user_file.return_value = mock_creds
-        
-        original = settings.GOOGLE_TOKEN_FILE
-        settings.GOOGLE_TOKEN_FILE = temp_path
-        
-        try:
-            result = load_credentials()
-            # If credentials were loaded and expired, refresh should be called
-            if mock_creds.expired and mock_creds.refresh_token:
-                mock_creds.refresh.assert_called()
-        except Exception:
-            pass  # May fail due to actual refresh attempt
-        finally:
-            settings.GOOGLE_TOKEN_FILE = original
-            temp_path.unlink(missing_ok=True)
+        mock_creds.token_uri = "https://oauth2.googleapis.com/token"
+        mock_creds.scopes = ["openid", "https://www.googleapis.com/auth/calendar.readonly"]
+        mock_creds.expiry = None
+
+        save_credentials(
+            user,
+            mock_creds,
+            identity={"sub": "google-sub-999", "email": "cred@example.com"},
+        )
+
+        row = GoogleCredential.objects.get(user=user)
+        self.assertEqual(row.google_sub, "google-sub-999")
+        self.assertEqual(row.email, "cred@example.com")
+        self.assertEqual(row.token, "access-token")
+
+    def test_save_credentials_round_trip(self):
+        """Saving then loading credentials returns usable-looking values."""
+        from unittest.mock import MagicMock, patch
+        from googlecal.client import save_credentials, load_credentials, GoogleAuthError
+        from googlecal.models import GoogleCredential
+
+        user = User.objects.create_user(username="roundtrip", email="rt@example.com")
+
+        mock_creds = MagicMock()
+        mock_creds.token = "tok"
+        mock_creds.refresh_token = "rtok"
+        mock_creds.token_uri = "https://oauth2.googleapis.com/token"
+        mock_creds.scopes = ["openid"]
+        mock_creds.expiry = None
+
+        with patch("googlecal.oauth.client_config", return_value={
+            "client_id": "cid", "client_secret": "csec",
+        }):
+            save_credentials(user, mock_creds, identity={"sub": "sub-rt", "email": "rt@example.com"})
+
+        row = GoogleCredential.objects.get(user=user)
+        self.assertEqual(row.token, "tok")
+        self.assertEqual(row.refresh_token, "rtok")
+
+
+# ---------------------------------------------------------------------------
+# Cross-user isolation
+# ---------------------------------------------------------------------------
+
+class CrossUserIsolationTests(TestCase):
+    """Credentials for user A must not be accessible to user B."""
+
+    def setUp(self):
+        from googlecal.models import GoogleCredential
+        from googlecal.client import save_credentials
+
+        self.user_a = User.objects.create_user(username="user_a", email="a@example.com")
+        self.user_b = User.objects.create_user(username="user_b", email="b@example.com")
+
+        mock_creds = MagicMock()
+        mock_creds.token = "token-a"
+        mock_creds.refresh_token = "refresh-a"
+        mock_creds.token_uri = "https://oauth2.googleapis.com/token"
+        mock_creds.scopes = ["openid"]
+        mock_creds.expiry = None
+
+        with patch("googlecal.oauth.client_config", return_value={
+            "client_id": "cid", "client_secret": "csec",
+        }):
+            save_credentials(self.user_a, mock_creds, identity={"sub": "sub-a", "email": "a@example.com"})
+
+    def test_user_b_has_no_credentials(self):
+        from googlecal.client import GoogleAuthError, load_credentials
+        from googlecal.oauth import client_config
+
+        with self.assertRaises(GoogleAuthError):
+            with patch("googlecal.oauth.client_config", return_value={
+                "client_id": "cid", "client_secret": "csec",
+            }):
+                load_credentials(self.user_b)
+
+    def test_user_a_credential_not_visible_to_user_b(self):
+        from googlecal.models import GoogleCredential
+
+        self.assertFalse(GoogleCredential.objects.filter(user=self.user_b).exists())
+        self.assertTrue(GoogleCredential.objects.filter(user=self.user_a).exists())

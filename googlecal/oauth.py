@@ -3,6 +3,11 @@
 The start request builds a consent URL and stores CSRF state plus a PKCE verifier
 in the session. The callback validates both values and exchanges Google's short-
 lived code for credentials that can call Calendar APIs.
+
+``client_config()`` reads ``credentials.json`` once and caches the result so
+every call to ``build_service`` or ``verify_id_token`` does not re-read the file.
+``verify_id_token`` extracts the stable ``sub`` and ``email`` claims that
+``oauth_callback`` uses to resolve the Django user.
 """
 
 import json
@@ -16,6 +21,8 @@ logger = logging.getLogger(__name__)
 # Session values connect the authorization start and callback requests.
 SESSION_STATE_KEY = "google_oauth_state"
 SESSION_VERIFIER_KEY = "google_oauth_code_verifier"
+
+_client_config_cache: dict | None = None
 
 
 class OAuthConfigError(RuntimeError):
@@ -54,6 +61,59 @@ def client_type():
     )
 
 
+def client_config() -> dict:
+    """Return the client configuration dict from ``credentials.json``.
+
+    The result is cached after the first read so repeated calls within a process
+    do not re-read the file. The returned dict has at minimum ``client_id`` and
+    ``client_secret`` keys.
+    """
+    global _client_config_cache
+    if _client_config_cache is not None:
+        return _client_config_cache
+
+    kind = client_type()
+    path = settings.GOOGLE_CREDENTIALS_FILE
+    config = json.loads(path.read_text())
+    _client_config_cache = config[kind]
+    return _client_config_cache
+
+
+def verify_id_token(credentials) -> dict:
+    """Verify the ID token on *credentials* and return identity claims.
+
+    Returns a dict with ``sub`` (Google's stable user identifier) and ``email``.
+    Raises ``OAuthConfigError`` when the token cannot be verified or the expected
+    claims are absent.
+    """
+    from google.auth.transport.requests import Request as GoogleRequest
+    from google.oauth2 import id_token as google_id_token
+
+    raw_id_token = getattr(credentials, "id_token", None)
+    if not raw_id_token:
+        raise OAuthConfigError(
+            "No ID token in Google credentials. "
+            "Ensure 'openid' is in GOOGLE_OAUTH_SCOPES."
+        )
+
+    cfg = client_config()
+    try:
+        claims = google_id_token.verify_oauth2_token(
+            raw_id_token,
+            GoogleRequest(),
+            cfg["client_id"],
+        )
+    except Exception as exc:
+        raise OAuthConfigError(f"ID token verification failed: {exc}") from exc
+
+    sub = claims.get("sub")
+    email = claims.get("email")
+    if not sub:
+        raise OAuthConfigError("ID token is missing the 'sub' claim.")
+
+    return {"sub": sub, "email": email or ""}
+
+
 def build_flow(state=None):
     """Create a Google OAuth flow from the project's configured values.
 
@@ -85,7 +145,7 @@ def authorization_url(request):
 
     request.session[SESSION_STATE_KEY] = state
     request.session[SESSION_VERIFIER_KEY] = flow.code_verifier
-    
+
     return url
 
 
@@ -116,5 +176,5 @@ def fetch_credentials(request):
 
     flow.code_verifier = code_verifier
     flow.fetch_token(authorization_response=request.build_absolute_uri())
-    
+
     return flow.credentials

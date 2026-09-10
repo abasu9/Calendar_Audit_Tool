@@ -138,6 +138,13 @@
 
   <header class="page-header">
     <h1>Calendar Audit Tool</h1>
+    {% if user.is_authenticated %}
+      <p style="margin:0.5rem 0 0;opacity:0.8;font-size:0.9rem;">
+        Signed in as <strong>{{ user_email }}</strong>
+        &nbsp;&mdash;&nbsp;
+        <a href="{% url 'logout' %}" style="color:#fff;">Sign out</a>
+      </p>
+    {% endif %}
   </header>
 
   {% if error %}
@@ -155,19 +162,19 @@
     <div class="card connect-card">
       <h2>Connect your Google Calendar</h2>
       <p>
-        You will be sent to Google's consent screen. Approving it stores a token
-        locally so the tool can read your primary calendar.
+        You will be sent to Google's consent screen. Signing in with Google
+        creates your account and grants read-only access to your primary calendar.
       </p>
       <p>Requested scopes:</p>
       <ul class="scopes">
         {% for scope in scopes %}<li><code>{{ scope }}</code></li>{% endfor %}
       </ul>
       <p style="margin-top:1rem">
-        <a class="btn" href="{% url 'oauth_start' %}">Connect Google Calendar</a>
+        <a class="btn" href="{% url 'oauth_start' %}">Sign in with Google</a>
       </p>
       <p style="font-size:0.85rem;opacity:0.7">
-        This must be registered as an authorized redirect URI on your OAuth
-        client: <code>{{ redirect_uri }}</code>
+        The redirect URI registered on your OAuth client must match:
+        <code>{{ redirect_uri }}</code>
       </p>
     </div>
   {% else %}

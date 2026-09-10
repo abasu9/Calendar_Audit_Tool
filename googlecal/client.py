@@ -1,14 +1,16 @@
-"""Load Google credentials and create Calendar API clients.
+"""Load per-user Google credentials and create Calendar API clients.
 
-OAuth credentials are read from the configured token file and refreshed when
-possible. The resulting credentials are passed to Google's Calendar v3 client so
-the rest of the project does not repeat authentication logic.
+Each Django user has one ``GoogleCredential`` row. ``load_credentials`` reads
+that row and builds a ``google.oauth2.credentials.Credentials`` object, refreshing
+it when the access token has expired. ``save_credentials`` writes the result back.
+``build_service`` wraps both steps and returns a ready-to-use Calendar v3 client.
 
-The only supported authorisation path is the web OAuth flow at ``/oauth2/start/``.
-There is no interactive CLI flow.
+The OAuth client ID and secret come from ``credentials.json`` at runtime via
+``googlecal.oauth.client_config``; they are never duplicated across database rows.
 """
 
 import logging
+from datetime import timezone as tz
 
 from django.conf import settings
 from google.auth.transport.requests import Request
@@ -24,55 +26,97 @@ class GoogleAuthError(RuntimeError):
     pass
 
 
-def load_credentials():
-    """Return valid saved credentials, refreshing if they have expired.
+def load_credentials(user):
+    """Return valid credentials for *user*, refreshing if they have expired.
 
-    The token file is loaded first. Expired credentials with a refresh token are
-    renewed and saved. If no usable token exists, ``GoogleAuthError`` is raised
-    so the caller can redirect the user to ``/oauth2/start/``.
+    Reads the user's ``GoogleCredential`` row, reconstructs a
+    ``google.oauth2.credentials.Credentials`` object, and refreshes it when the
+    access token has expired. The refreshed value is persisted before returning.
+    Raises ``GoogleAuthError`` when the user has no stored credentials.
     """
-    token_file = settings.GOOGLE_TOKEN_FILE
-    scopes = settings.GOOGLE_OAUTH_SCOPES
+    from googlecal.models import GoogleCredential
+    from googlecal.oauth import client_config
 
-    creds = None
+    try:
+        row = GoogleCredential.objects.get(user=user)
+    except GoogleCredential.DoesNotExist:
+        raise GoogleAuthError(
+            f"No Google credentials for user {user}. "
+            "Visit / to connect your Google Calendar."
+        )
 
-    if token_file.exists():
-        creds = Credentials.from_authorized_user_file(str(token_file), scopes)
+    cfg = client_config()
 
-    if creds and creds.valid:
+    creds = Credentials(
+        token=row.token,
+        refresh_token=row.refresh_token or None,
+        token_uri=row.token_uri,
+        client_id=cfg["client_id"],
+        client_secret=cfg["client_secret"],
+        scopes=row.scopes,
+        expiry=row.expiry.replace(tzinfo=None) if row.expiry else None,
+    )
+
+    if creds.valid:
         return creds
 
-    if creds and creds.expired and creds.refresh_token:
-        logger.info("Refreshing expired Google credentials")
+    if creds.expired and creds.refresh_token:
+        logger.info("Refreshing expired Google credentials for user %s", user)
         creds.refresh(Request())
-        save_credentials(creds)
+        save_credentials(user, creds)
         return creds
 
     raise GoogleAuthError(
-        f"No usable Google credentials at {token_file}. Start the server and "
-        "visit http://localhost:8000/ to authorise with Google."
+        f"Google credentials for user {user} are invalid and could not be refreshed. "
+        "Visit / to reconnect your Google Calendar."
     )
 
 
-def save_credentials(creds):
-    """Save OAuth credentials in the configured private token file.
+def save_credentials(user, creds, *, identity=None):
+    """Persist OAuth credentials for *user* in the database.
 
-    Parent folders are created when needed, Google's JSON form is written, and
-    owner-only permissions protect access and refresh tokens on supported systems.
+    Called after the initial OAuth exchange and after each token refresh.
+    Google omits ``refresh_token`` in refresh responses, so the existing value
+    is kept when the incoming token is absent. ``identity`` (a dict with ``sub``
+    and ``email``) is used on the first save to populate ``google_sub`` and
+    ``email``; on subsequent saves those fields are left unchanged.
     """
-    token_file = settings.GOOGLE_TOKEN_FILE
-    token_file.parent.mkdir(parents=True, exist_ok=True)
-    token_file.write_text(creds.to_json())
-    token_file.chmod(0o600)
+    from googlecal.models import GoogleCredential
+
+    expiry = None
+    if creds.expiry:
+        expiry = creds.expiry.replace(tzinfo=tz.utc)
+
+    defaults = {
+        "token": creds.token or "",
+        "token_uri": creds.token_uri or "https://oauth2.googleapis.com/token",
+        "scopes": list(creds.scopes or settings.GOOGLE_OAUTH_SCOPES),
+        "expiry": expiry,
+    }
+
+    # Keep the stored refresh token when Google did not return a new one.
+    if creds.refresh_token:
+        defaults["refresh_token"] = creds.refresh_token
+
+    if identity:
+        defaults["google_sub"] = identity["sub"]
+        defaults["email"] = identity.get("email", "")
+
+    GoogleCredential.objects.update_or_create(user=user, defaults=defaults)
+    logger.debug("Saved Google credentials for user %s", user)
 
 
-def build_service(*, credentials=None):
+def build_service(*, user=None, credentials=None):
     """Return an authenticated Google Calendar v3 service object.
 
-    Supplied credentials are reused; otherwise they are loaded through
-    ``load_credentials``. Discovery caching is disabled so the client does not
-    create outdated cache files or related warnings.
+    Supplied credentials are reused directly. When absent, ``load_credentials``
+    is called with *user*. Exactly one of ``user`` or ``credentials`` must be
+    provided. Discovery caching is disabled so the client does not write stale
+    cache files.
     """
-    creds = credentials or load_credentials()
+    if credentials is None:
+        if user is None:
+            raise ValueError("Either user or credentials must be provided.")
+        credentials = load_credentials(user)
 
-    return build("calendar", "v3", credentials=creds, cache_discovery=False)
+    return build("calendar", "v3", credentials=credentials, cache_discovery=False)

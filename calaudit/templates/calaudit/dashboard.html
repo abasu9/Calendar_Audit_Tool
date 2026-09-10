@@ -242,7 +242,16 @@
 <body>
   <div class="container">
     <header>
-      <a href="/" class="back-link">&larr; Back to Calendar</a>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem;">
+        <a href="/" class="back-link" style="margin-bottom:0;">&larr; Back to Calendar</a>
+        {% if user_email %}
+          <span style="color:rgba(255,255,255,0.72);font-size:0.88rem;">
+            {{ user_email }}
+            &nbsp;&mdash;&nbsp;
+            <a href="{% url 'logout' %}" style="color:rgba(255,255,255,0.72);">Sign out</a>
+          </span>
+        {% endif %}
+      </div>
       <div class="header-row">
         <div>
           <h1>Calendar Audit Dashboard</h1>

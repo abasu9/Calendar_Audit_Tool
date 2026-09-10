@@ -12,13 +12,14 @@ periodic scheduler.
 
 ## Features
 
-- Connect a Google Calendar securely via OAuth
-- Automatic initial sync and push-channel registration after OAuth
-- Real-time calendar updates through Google push notifications
-- Manual sync button as a backup on both dashboards
-- Preview events for the next seven days
-- Store calendar data in Supabase or local PostgreSQL
-- Review meeting audit metrics from the Audit Dashboard
+- **Multi-user support**: each Google account gets its own isolated data.
+- Sign in with Google — no separate account creation needed.
+- Automatic initial sync and push-channel registration after sign-in.
+- Real-time calendar updates through Google push notifications.
+- Manual sync button as a backup on both dashboards.
+- Preview events for the next seven days.
+- Store calendar data in Supabase or local PostgreSQL.
+- Review meeting audit metrics from the Audit Dashboard.
 
 ## Technology
 
@@ -109,32 +110,33 @@ POSTGRES_HOST=localhost
 POSTGRES_PORT=5432
 ```
 
-### Google OAuth
+### Google OAuth (Sign in with Google)
+
+User tokens are stored in the database. Only `credentials.json` (the OAuth
+client configuration) needs to live on disk.
 
 1. In Google Cloud, enable **Google Calendar API**.
-2. Configure the Google Auth Platform consent screen.
-3. For a personal Google account, select an external audience and add the
-   account under **Test users**.
-4. Create an OAuth client of type **Web application**.
-5. Register this redirect URI exactly, including the trailing slash:
+2. Configure the Google Auth Platform consent screen — choose **External**
+   for a personal account and add each test address under **Test users**.
+3. Create an OAuth client of type **Web application**.
+4. Register this redirect URI exactly, including the trailing slash:
 
    ```text
    http://localhost:8000/oauth2/callback/
    ```
 
-6. Download the client JSON as `credentials.json` in the project root.
+5. Download the client JSON as `credentials.json` in the project root.
 
 Configure the corresponding paths in `.env`:
 
 ```dotenv
 GOOGLE_CREDENTIALS_FILE=credentials.json
-GOOGLE_TOKEN_FILE=token.json
 GOOGLE_OAUTH_REDIRECT_URI=http://localhost:8000/oauth2/callback/
 REPORT_TIME_ZONE=America/Chicago
 ```
 
-The browser flow writes `token.json` after authorization. Both credential files
-are gitignored and must never be committed.
+`credentials.json` is gitignored and must never be committed. User access and
+refresh tokens are stored in the `googlecal_googlecredential` database table.
 
 ## Database initialization
 
@@ -144,14 +146,22 @@ Apply the Django schema to the configured database:
 .venv/bin/python manage.py migrate
 ```
 
+> **Migrating from a single-user installation**
+>
+> Migration `calsync/0002_multi_user` drops all three calsync tables
+> (`CalendarEvent`, `SyncState`, `WatchChannel`) and recreates them with
+> user foreign keys. All previously synced events are deleted. After migrating,
+> sign in again at `http://localhost:8000/` and the application will re-import
+> the last 90 days of events automatically.
+
 ## Run the application
 
 ```bash
 .venv/bin/python manage.py runserver
 ```
 
-Open <http://localhost:8000/> and select **Connect Google Calendar**. After
-authorization the application automatically:
+Open <http://localhost:8000/> and click **Sign in with Google**. After signing
+in, the application automatically:
 
 1. Imports the previous 90 days of events from Google Calendar.
 2. Registers a Google push-notification channel so real-time sync starts.
@@ -188,16 +198,19 @@ ngrok prints a forwarding URL such as `https://abc123.ngrok-free.app`. If you
 use a [static domain](https://ngrok.com/blog-post/free-static-domains), the URL
 stays the same across restarts.
 
-**Step 2 — connect Google Calendar:**
+**Step 2 — sign in with Google:**
 
-Visit `http://localhost:8000/` (the localhost URL is fine; token.json is not
-host-bound) and connect your calendar. The background thread runs the initial
-sync automatically.
+Visit `http://localhost:8000/` and click **Sign in with Google**. The
+background thread runs the initial sync automatically after authorization.
 
 **Step 3 — register the webhook channel:**
 
 ```bash
+# Auto-selects the only user when there is exactly one:
 .venv/bin/python manage.py dev_watch
+
+# Or specify the user explicitly when multiple accounts exist:
+.venv/bin/python manage.py dev_watch --user alice@example.com
 ```
 
 `dev_watch` reads the running ngrok tunnel from its local API and registers a
@@ -208,7 +221,7 @@ a new domain to replace the stale channel.
 # Override the auto-detected URL (other tunnel providers, static domain, etc.)
 .venv/bin/python manage.py dev_watch --url https://my-static.ngrok-free.app
 
-# Stop all active channels for the primary calendar
+# Stop all active channels for the user's primary calendar
 .venv/bin/python manage.py dev_watch --stop
 ```
 
@@ -246,18 +259,19 @@ stored in UTC.
 
 | Method | Route | Purpose |
 | --- | --- | --- |
-| `GET` | `/` | OAuth status, calendar preview, and manual sync |
-| `GET` | `/oauth2/start/` | Begin Google authorization |
-| `GET` | `/oauth2/callback/` | Complete Google authorization |
-| `POST` | `/api/sync/` | Run a CSRF-protected manual sync |
+| `GET` | `/` | Sign-in prompt or calendar preview (requires auth) |
+| `GET` | `/oauth2/start/` | Begin Google Sign-In |
+| `GET` | `/oauth2/callback/` | Complete Google Sign-In |
+| `GET` | `/logout/` | Sign out |
+| `POST` | `/api/sync/` | Run a CSRF-protected manual sync (requires auth) |
 | `POST` | `/api/webhook/` | Receive Google push notifications |
-| `GET` | `/api/audit/` | Render the audit dashboard |
-| `GET` | `/api/audit/monthly-time/` | Monthly meeting time |
-| `GET` | `/api/audit/meeting-extremes/` | Highest and lowest meeting months |
-| `GET` | `/api/audit/weekly-extremes/` | Busiest and most relaxed weeks |
-| `GET` | `/api/audit/weekly-averages/` | Weekly meeting averages |
-| `GET` | `/api/audit/top-contacts/` | Most frequent contacts |
-| `GET` | `/api/audit/interview-time/` | Recruiting and interview time |
+| `GET` | `/api/audit/` | Render the audit dashboard (requires auth) |
+| `GET` | `/api/audit/monthly-time/` | Monthly meeting time (requires auth) |
+| `GET` | `/api/audit/meeting-extremes/` | Highest and lowest meeting months (requires auth) |
+| `GET` | `/api/audit/weekly-extremes/` | Busiest and most relaxed weeks (requires auth) |
+| `GET` | `/api/audit/weekly-averages/` | Weekly meeting averages (requires auth) |
+| `GET` | `/api/audit/top-contacts/` | Most frequent contacts (requires auth) |
+| `GET` | `/api/audit/interview-time/` | Recruiting and interview time (requires auth) |
 
 ## Useful commands
 
@@ -267,6 +281,7 @@ stored in UTC.
 
 # Register a local ngrok webhook channel (DEBUG only)
 .venv/bin/python manage.py dev_watch
+.venv/bin/python manage.py dev_watch --user alice@example.com
 .venv/bin/python manage.py dev_watch --url https://my-static.ngrok-free.app
 .venv/bin/python manage.py dev_watch --stop
 ```
@@ -288,7 +303,8 @@ and destroy test databases.
 
 ## Security notes
 
-- Never commit `.env`, `credentials.json`, or `token.json`.
+- Never commit `.env` or `credentials.json`. User tokens are stored only in
+  the database and never on disk.
 - Use `sslmode=require` or Supabase's CA certificate with
   `sslmode=verify-full` for remote database traffic.
 - Set `DEBUG=False`, use a strong `SECRET_KEY`, and define production
@@ -296,4 +312,7 @@ and destroy test databases.
 - The Google webhook is CSRF-exempt because Google cannot supply a Django CSRF
   token; channel-token verification prevents arbitrary requests from invoking
   synchronization.
-- The manual sync endpoint remains CSRF-protected.
+- All other authenticated endpoints are CSRF-protected.
+- Each user's events, sync state, and webhook channels are isolated by a
+  database-level foreign key — queries for one user cannot return another
+  user's data.

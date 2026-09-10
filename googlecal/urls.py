@@ -11,4 +11,7 @@ urlpatterns = [
     # Start authorization, then receive Google's result.
     path("oauth2/start/", views.oauth_start, name="oauth_start"),
     path("oauth2/callback/", views.oauth_callback, name="oauth_callback"),
+
+    # Sign out and return to the dashboard.
+    path("logout/", views.logout_view, name="logout"),
 ]
