@@ -12,6 +12,8 @@ from datetime import datetime, timedelta
 from typing import Optional
 from zoneinfo import ZoneInfo
 
+from django.conf import settings
+from django.urls import reverse
 from django.utils import timezone
 from googleapiclient.errors import HttpError
 
@@ -158,17 +160,6 @@ def stop_watch_channel(channel_id: str) -> bool:
     return True
 
 
-def get_active_channels(calendar_id: Optional[str] = None) -> list[WatchChannel]:
-    """Return active channels, optionally limited to one calendar.
-
-    The queryset always filters on the local active flag and is evaluated into a
-    list before returning it to commands or views.
-    """
-    queryset = WatchChannel.objects.filter(active=True)
-    if calendar_id:
-        queryset = queryset.filter(calendar_id=calendar_id)
-    return list(queryset)
-
 
 def cleanup_expired_channels() -> int:
     """Mark locally active channels with past expirations as inactive.
@@ -186,6 +177,88 @@ def cleanup_expired_channels() -> int:
         logger.info(f"Marked {result} expired channels as inactive")
     
     return result
+
+
+def ensure_watch_channel(
+    calendar_id: str = "primary",
+    webhook_url: Optional[str] = None,
+) -> Optional[WatchChannel]:
+    """Ensure an active, unexpired push channel exists for one calendar.
+
+    Resolves the webhook URL from the explicit argument or from
+    ``settings.PUBLIC_BASE_URL``. When no usable HTTPS URL is available the
+    function logs the reason and returns ``None`` without touching any existing
+    channels — this matters in local development where an ngrok channel may have
+    been registered by ``dev_watch`` while ``PUBLIC_BASE_URL`` is unset.
+
+    An active channel whose stored URL matches and whose expiration is more than
+    one day away is reused. Otherwise stale channels for the calendar are stopped
+    and a fresh one is created.
+    """
+    # Resolve the webhook URL.
+    if not webhook_url:
+        base = getattr(settings, "PUBLIC_BASE_URL", "").rstrip("/")
+        if not base:
+            logger.info(
+                "PUBLIC_BASE_URL is not set; skipping watch-channel setup for %s",
+                calendar_id,
+            )
+            return None
+        webhook_url = base + reverse("webhook")
+
+    if not webhook_url.startswith("https://"):
+        logger.warning(
+            "Webhook URL %r is not HTTPS; Google cannot deliver notifications. "
+            "Skipping watch-channel setup for %s.",
+            webhook_url,
+            calendar_id,
+        )
+        return None
+
+    # Mark any channels whose expiration has already passed.
+    cleanup_expired_channels()
+
+    # Reuse an active channel for this calendar that still points at the right
+    # URL and has more than one day of life remaining.
+    renew_threshold = timezone.now() + timedelta(days=1)
+    existing = (
+        WatchChannel.objects.filter(
+            calendar_id=calendar_id,
+            webhook_url=webhook_url,
+            active=True,
+            expiration__gt=renew_threshold,
+        )
+        .order_by("-expiration")
+        .first()
+    )
+    if existing:
+        logger.info(
+            "Reusing existing watch channel %s for %s (expires %s)",
+            existing.channel_id,
+            calendar_id,
+            existing.expiration.isoformat(),
+        )
+        return existing
+
+    # Stop any stale channels for this calendar before creating a new one.
+    stale = WatchChannel.objects.filter(calendar_id=calendar_id, active=True)
+    for ch in stale:
+        stop_watch_channel(str(ch.channel_id))
+
+    channel = create_watch_channel(
+        calendar_id=calendar_id,
+        webhook_url=webhook_url,
+        expiration_days=getattr(settings, "WATCH_EXPIRATION_DAYS", 7),
+    )
+    if channel:
+        logger.info(
+            "Created new watch channel %s for %s",
+            channel.channel_id,
+            calendar_id,
+        )
+    else:
+        logger.error("Failed to create watch channel for %s", calendar_id)
+    return channel
 
 
 def verify_notification_token(channel_id: str, token: str) -> bool:

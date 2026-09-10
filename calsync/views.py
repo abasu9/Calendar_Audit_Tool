@@ -12,7 +12,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_POST
 
 from .sync import handle_push_notification, incremental_sync
-from .watch import verify_notification_token
+from .watch import ensure_watch_channel, verify_notification_token
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +34,11 @@ def manual_sync(request):
             },
             status=502,
         )
+
+    # Opportunistic channel renewal: a cheap DB check that only calls Google
+    # when the channel is near expiry or missing. Runs after sync so it does
+    # not delay the JSON response on the happy path.
+    ensure_watch_channel("primary")
 
     return JsonResponse(
         {

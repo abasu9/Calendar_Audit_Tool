@@ -117,7 +117,10 @@ def oauth_callback(request):
 
     save_credentials(credentials)
     logger.info("Stored Google credentials at %s", settings.GOOGLE_TOKEN_FILE)
-    
+
+    from calsync.bootstrap import start_bootstrap
+    start_bootstrap("primary")
+
     return redirect(reverse("dashboard"))
 
 

@@ -57,7 +57,6 @@ CSRF_TRUSTED_ORIGINS = env_list("CSRF_TRUSTED_ORIGINS")
 
 INSTALLED_APPS = [
     # Django framework features.
-    "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
@@ -161,6 +160,15 @@ if DEBUG and GOOGLE_OAUTH_REDIRECT_URI.startswith("http://"):
 
 # Accept Google's equivalent identity-scope names and ordering.
 os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
+
+
+# Public HTTPS base URL used to build the Google Calendar webhook callback.
+# In production set this to your domain, e.g. https://app.example.com
+# For local development leave it unset and use `manage.py dev_watch` instead.
+PUBLIC_BASE_URL = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")
+
+# How many days a Google push-notification channel should last before renewal.
+WATCH_EXPIRATION_DAYS = int(os.getenv("WATCH_EXPIRATION_DAYS", "7"))
 
 
 LOGGING = {

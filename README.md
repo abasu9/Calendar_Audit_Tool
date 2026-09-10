@@ -4,44 +4,21 @@ A Django application that connects to a user's primary Google Calendar,
 synchronizes recent events into PostgreSQL, and presents a dashboard of meeting
 habits and time allocation.
 
-The primary data-refresh path is a Google Calendar push webhook. Users can also
-request an on-demand sync from either dashboard when a notification is missed
-or delayed. There is no periodic scheduler.
+The primary data-refresh path is a Google Calendar push webhook. After OAuth,
+the application bootstraps itself: a background thread runs the initial full sync
+and registers the push channel automatically. Users can also trigger an on-demand
+sync from either dashboard when a notification is missed or delayed. There is no
+periodic scheduler.
 
 ## Features
 
-- Connect a Google Calendar securely
+- Connect a Google Calendar securely via OAuth
+- Automatic initial sync and push-channel registration after OAuth
+- Real-time calendar updates through Google push notifications
+- Manual sync button as a backup on both dashboards
 - Preview events for the next seven days
-- Keep calendar data current through real-time webhooks
-- Refresh calendar data manually when needed
 - Store calendar data in Supabase or local PostgreSQL
-- Review meeting audit metrics from the Dashboard
-
-## Implementation phases
-
-### Phase 1 — Google Calendar connection
-
-- Set up the Django project and Google Calendar API client
-- Add the Google OAuth authorization flow
-- Display the connected calendar and upcoming events
-- Add command-line tools for testing calendar access
-
-### Phase 2 — Calendar synchronization
-
-- Store calendar events in PostgreSQL
-- Add initial full sync and incremental sync
-- Track Google sync tokens and recover from expired tokens
-- Receive real-time updates through Google push notifications
-- Add manual dashboard sync as a backup
-
-### Phase 3 — Calendar audit
-
-- Calculate monthly meeting time and meeting counts
-- Identify busiest and most relaxed weeks
-- Calculate weekly meeting averages
-- Find the most frequent meeting contacts
-- Measure recruiting and interview time
-- Expose the results through APIs and the audit dashboard
+- Review meeting audit metrics from the Audit Dashboard
 
 ## Technology
 
@@ -58,30 +35,31 @@ or delayed. There is no periodic scheduler.
 config/
   database.py            DATABASE_URL, SSL, and pooler configuration
   settings.py            Django and Google integration settings
-  api_urls.py             API route composition
+  api_urls.py            API route composition
 
 googlecal/
-  client.py               Credential loading and Google API client
-  oauth.py                OAuth authorization-code flow
-  views.py                Main dashboard and OAuth callbacks
-  templates/              Connected-calendar dashboard
-  management/commands/    Calendar preview command
+  client.py              Credential loading and Google API client
+  oauth.py               OAuth authorization-code flow
+  views.py               Main dashboard and OAuth callbacks
+  templates/             Connected-calendar dashboard
 
 calsync/
-  models.py               Events, sync state, and watch channels
-  sync.py                 Full and incremental synchronization
-  watch.py                Google push-channel management
-  views.py                Manual sync and webhook endpoints
-  management/commands/    Calendar sync and watch utilities
+  bootstrap.py           Post-OAuth bootstrap: full sync + watch channel
+  models.py              Events, sync state, and watch channels
+  sync.py                Full and incremental synchronization
+  watch.py               Google push-channel management
+  views.py               Manual sync and webhook endpoints
+  management/commands/
+    check_database.py    Database health and connection check
+    dev_watch.py         Register a local ngrok webhook channel (DEBUG only)
 
 calaudit/
-  queries.py              Calendar analytics queries
-  views.py                Audit API views and dashboard
-  templates/              Audit dashboard
+  queries.py             Calendar analytics queries
+  views.py               Audit API views and dashboard
+  templates/             Audit dashboard
 
 scripts/
-  quickstart.py           Standalone Google API smoke test
-  simulate_push.py        Local webhook simulation helper
+  quickstart.py          Standalone Google API smoke test
 ```
 
 ## Prerequisites
@@ -89,7 +67,7 @@ scripts/
 - Python 3.14
 - A Google Cloud project with the Google Calendar API enabled
 - A Supabase project or local PostgreSQL database
-- ngrok or another public HTTPS tunnel for local webhook delivery
+- ngrok (for real-time webhooks during local development)
 
 ## Installation
 
@@ -118,9 +96,7 @@ DB_CONN_MAX_AGE=60
 ```
 
 Percent-encode reserved characters in the password before placing it in the
-URL. A transaction-pooler URI on port `6543` is also supported; the database
-utility automatically disables prepared statements and server-side cursors
-for that mode.
+URL. A transaction-pooler URI on port `6543` is also supported.
 
 When `DATABASE_URL` is absent, the application uses these local PostgreSQL
 settings instead:
@@ -168,60 +144,78 @@ Apply the Django schema to the configured database:
 .venv/bin/python manage.py migrate
 ```
 
-Switching from local PostgreSQL to Supabase creates an empty database. Migrations
-create the tables but do not copy local events, sync tokens, sessions, or watch
-channels.
-
 ## Run the application
-
-Start Django:
 
 ```bash
 .venv/bin/python manage.py runserver
 ```
 
 Open <http://localhost:8000/> and select **Connect Google Calendar**. After
-authorization, perform the initial sync from the dashboard or the command line:
+authorization the application automatically:
 
-```bash
-.venv/bin/python manage.py sync_calendar --full
+1. Imports the previous 90 days of events from Google Calendar.
+2. Registers a Google push-notification channel so real-time sync starts.
+
+Both steps run in a background thread; the dashboard is available immediately.
+If the initial import fails for any reason, click **Sync calendar** on the
+dashboard to retry.
+
+## Real-time webhook sync — production
+
+Set `PUBLIC_BASE_URL` to your production HTTPS domain in `.env`:
+
+```dotenv
+PUBLIC_BASE_URL=https://app.example.com
 ```
 
-The initial full sync imports the previous 90 days and establishes the Google
-`syncToken` used by later incremental syncs.
+That is the only configuration change needed. After the next OAuth connection
+(or **Sync calendar** click), the application registers a push channel pointing
+at `https://app.example.com/api/webhook/` automatically. Channels expire every
+seven days and are renewed on the next manual sync, so no cron job is required.
 
-## Configure real-time webhook sync
+## Real-time webhook sync — local development
 
-Google requires a publicly reachable HTTPS endpoint. For local development,
-start a tunnel that forwards to Django's actual port:
+Google cannot deliver push notifications to `localhost`, so local development
+requires an HTTPS tunnel. [ngrok](https://ngrok.com) works well.
+
+**Step 1 — start ngrok:**
 
 ```bash
 ngrok http 8000
 ```
 
-Confirm that ngrok reports a forwarding target of `http://localhost:8000`, then
-register its current HTTPS URL:
+ngrok prints a forwarding URL such as `https://abc123.ngrok-free.app`. If you
+use a [static domain](https://ngrok.com/blog-post/free-static-domains), the URL
+stays the same across restarts.
+
+**Step 2 — connect Google Calendar:**
+
+Visit `http://localhost:8000/` (the localhost URL is fine; token.json is not
+host-bound) and connect your calendar. The background thread runs the initial
+sync automatically.
+
+**Step 3 — register the webhook channel:**
 
 ```bash
-.venv/bin/python manage.py setup_watch \
-  --url https://YOUR-NGROK-HOST/api/webhook/
+.venv/bin/python manage.py dev_watch
 ```
 
-Inspect or stop active channels with:
+`dev_watch` reads the running ngrok tunnel from its local API and registers a
+push channel pointing at the tunnel URL. Run it again after ngrok restarts with
+a new domain to replace the stale channel.
 
 ```bash
-.venv/bin/python manage.py stop_watch --list
-.venv/bin/python manage.py stop_watch --channel-id CHANNEL_UUID
-.venv/bin/python manage.py stop_watch --all
+# Override the auto-detected URL (other tunnel providers, static domain, etc.)
+.venv/bin/python manage.py dev_watch --url https://my-static.ngrok-free.app
+
+# Stop all active channels for the primary calendar
+.venv/bin/python manage.py dev_watch --stop
 ```
 
-Watch channels expire and Google does not renew them automatically. Register a
-replacement before expiration. Avoid multiple active channels for the same
-calendar and webhook URL, since each channel produces its own notification.
+`dev_watch` refuses to run when `DEBUG=False`.
 
-When the application database changes, such as moving from local PostgreSQL to
-Supabase, register a new channel so its verification token and resource ID are
-stored in the new database.
+`ALLOWED_HOSTS` already accepts `*.ngrok-free.dev` and `*.ngrok-free.app`
+subdomains in debug mode, so no further host configuration is needed.
 
 ## Sync behavior
 
@@ -233,8 +227,6 @@ stored in the new database.
 - Full sync reconciles events from the previous 90 days.
 - The audit database stores past events; future events remain available in the
   seven-day preview directly from Google Calendar.
-
-There is intentionally no cron job or periodic synchronization command.
 
 ## Audit dashboard
 
@@ -270,25 +262,20 @@ stored in UTC.
 ## Useful commands
 
 ```bash
-# Initial or forced full calendar sync
-.venv/bin/python manage.py sync_calendar --full
+# Check database connectivity and schema
+.venv/bin/python manage.py check_database
 
-# Incremental sync, with automatic full-sync fallback
-.venv/bin/python manage.py sync_calendar
-
-# Preview upcoming or past events directly from Google
-.venv/bin/python manage.py list_events --days 7
-.venv/bin/python manage.py list_events --days 30 --past
-
-# Exercise a locally running webhook with a stored watch channel
-.venv/bin/python manage.py test_webhook
+# Register a local ngrok webhook channel (DEBUG only)
+.venv/bin/python manage.py dev_watch
+.venv/bin/python manage.py dev_watch --url https://my-static.ngrok-free.app
+.venv/bin/python manage.py dev_watch --stop
 ```
 
 ## Testing
 
 The test suite covers OAuth helpers, calendar parsing and synchronization,
-webhook validation, manual sync, audit queries and APIs, and database URL
-configuration.
+webhook validation, manual sync, watch-channel management, audit queries and
+APIs, and database URL configuration.
 
 ```bash
 .venv/bin/python manage.py check

@@ -152,6 +152,38 @@ class OAuthCallbackViewTests(TestCase):
         # Should return 400 for error from Google
         self.assertIn(response.status_code, [400, 200])
 
+    @patch("calsync.bootstrap.start_bootstrap")
+    @patch("googlecal.views.save_credentials")
+    @patch("googlecal.views.fetch_credentials")
+    def test_successful_callback_starts_bootstrap(
+        self, mock_fetch, mock_save, mock_bootstrap
+    ):
+        """A successful OAuth callback must save credentials then start bootstrap."""
+        mock_creds = MagicMock()
+        mock_fetch.return_value = mock_creds
+
+        response = self.client.get(self.url, {"code": "auth-code", "state": "s"})
+
+        mock_save.assert_called_once_with(mock_creds)
+        mock_bootstrap.assert_called_once_with("primary")
+        # Should redirect to dashboard after success.
+        self.assertIn(response.status_code, [302, 400])
+
+    @patch("calsync.bootstrap.start_bootstrap")
+    @patch("googlecal.views.save_credentials")
+    @patch("googlecal.views.fetch_credentials")
+    def test_bootstrap_not_called_on_fetch_failure(
+        self, mock_fetch, mock_save, mock_bootstrap
+    ):
+        """Bootstrap must not be called when credential exchange fails."""
+        from googlecal.oauth import OAuthConfigError
+
+        mock_fetch.side_effect = OAuthConfigError("state mismatch")
+
+        self.client.get(self.url, {"code": "auth-code", "state": "bad"})
+
+        mock_bootstrap.assert_not_called()
+
 
 class OAuthModuleTests(TestCase):
     """

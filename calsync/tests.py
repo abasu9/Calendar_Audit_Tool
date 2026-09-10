@@ -289,8 +289,9 @@ class ManualSyncViewTests(TestCase):
 
         self.assertEqual(response.status_code, 403)
 
+    @patch("calsync.views.ensure_watch_channel")
     @patch("calsync.views.incremental_sync")
-    def test_successful_sync_returns_counts(self, mock_sync):
+    def test_successful_sync_returns_counts(self, mock_sync, mock_ensure):
         """Verify that a successful sync returns its type and row counts."""
 
         mock_sync.return_value = SyncResult(
@@ -316,9 +317,11 @@ class ManualSyncViewTests(TestCase):
             },
         )
         mock_sync.assert_called_once_with("primary")
+        mock_ensure.assert_called_once_with("primary")
 
+    @patch("calsync.views.ensure_watch_channel")
     @patch("calsync.views.incremental_sync")
-    def test_failed_sync_returns_error(self, mock_sync):
+    def test_failed_sync_returns_error(self, mock_sync, mock_ensure):
         """Verify that a failed sync returns its message with HTTP 502."""
 
         mock_sync.return_value = SyncResult(
@@ -336,6 +339,8 @@ class ManualSyncViewTests(TestCase):
                 "error": "Google Calendar is unavailable.",
             },
         )
+        # ensure_watch_channel must not run when sync fails.
+        mock_ensure.assert_not_called()
 
 
 class WatchChannelModelTests(TestCase):
@@ -498,3 +503,189 @@ class WebhookViewTests(TestCase):
         )
         
         self.assertEqual(response.status_code, 403)
+
+
+class EnsureWatchChannelTests(TestCase):
+    """Verify ensure_watch_channel reuse, renewal, and no-URL skip behaviour."""
+
+    WEBHOOK_URL = "https://example.ngrok-free.app/api/webhook/"
+
+    def _make_channel(self, *, expiration_offset_days=7, webhook_url=None):
+        return WatchChannel.objects.create(
+            channel_id=uuid.uuid4(),
+            resource_id="res-123",
+            calendar_id="primary",
+            webhook_url=webhook_url or self.WEBHOOK_URL,
+            token="tok",
+            expiration=timezone.now() + timedelta(days=expiration_offset_days),
+            active=True,
+        )
+
+    def test_returns_none_when_no_url_and_no_public_base_url(self):
+        """When PUBLIC_BASE_URL is unset and no explicit URL given, return None."""
+        from calsync.watch import ensure_watch_channel
+        from django.test import override_settings
+
+        with override_settings(PUBLIC_BASE_URL=""):
+            result = ensure_watch_channel("primary")
+
+        self.assertIsNone(result)
+
+    def test_returns_none_when_url_is_http(self):
+        """Non-HTTPS URLs must be rejected and return None."""
+        from calsync.watch import ensure_watch_channel
+
+        result = ensure_watch_channel("primary", webhook_url="http://example.com/api/webhook/")
+
+        self.assertIsNone(result)
+
+    def test_reuses_valid_existing_channel(self):
+        """A matching, long-lived channel is returned without a Google API call."""
+        from calsync.watch import ensure_watch_channel
+
+        existing = self._make_channel(expiration_offset_days=5)
+
+        with patch("calsync.watch.create_watch_channel") as mock_create:
+            result = ensure_watch_channel("primary", webhook_url=self.WEBHOOK_URL)
+
+        mock_create.assert_not_called()
+        self.assertEqual(result, existing)
+
+    def test_does_not_reuse_nearly_expired_channel(self):
+        """A channel expiring within one day triggers renewal."""
+        from calsync.watch import ensure_watch_channel
+
+        self._make_channel(expiration_offset_days=0)  # expires "now", so active=True but expired
+
+        new_channel = WatchChannel(
+            channel_id=uuid.uuid4(),
+            resource_id="new-res",
+            calendar_id="primary",
+            webhook_url=self.WEBHOOK_URL,
+            token="new-tok",
+            expiration=timezone.now() + timedelta(days=7),
+            active=True,
+        )
+        with patch("calsync.watch.create_watch_channel", return_value=new_channel) as mock_create, \
+             patch("calsync.watch.stop_watch_channel"):
+            result = ensure_watch_channel("primary", webhook_url=self.WEBHOOK_URL)
+
+        mock_create.assert_called_once()
+        self.assertEqual(result, new_channel)
+
+    def test_url_mismatch_forces_new_channel(self):
+        """A channel pointing at a different URL is not reused."""
+        from calsync.watch import ensure_watch_channel
+
+        self._make_channel(
+            expiration_offset_days=5,
+            webhook_url="https://old.ngrok-free.app/api/webhook/",
+        )
+
+        new_channel = WatchChannel(
+            channel_id=uuid.uuid4(),
+            resource_id="res",
+            calendar_id="primary",
+            webhook_url=self.WEBHOOK_URL,
+            token="tok",
+            expiration=timezone.now() + timedelta(days=7),
+            active=True,
+        )
+        with patch("calsync.watch.create_watch_channel", return_value=new_channel) as mock_create, \
+             patch("calsync.watch.stop_watch_channel"):
+            result = ensure_watch_channel("primary", webhook_url=self.WEBHOOK_URL)
+
+        mock_create.assert_called_once()
+        self.assertEqual(result, new_channel)
+
+    def test_does_not_touch_channels_when_no_url(self):
+        """Returning early must leave any existing channels untouched."""
+        from calsync.watch import ensure_watch_channel
+        from django.test import override_settings
+
+        existing = self._make_channel()
+
+        with override_settings(PUBLIC_BASE_URL=""):
+            with patch("calsync.watch.stop_watch_channel") as mock_stop:
+                ensure_watch_channel("primary")
+
+        mock_stop.assert_not_called()
+        existing.refresh_from_db()
+        self.assertTrue(existing.active)
+
+
+class DevWatchCommandTests(TestCase):
+    """Verify dev_watch URL detection and the DEBUG guard."""
+
+    def test_refuses_to_run_in_production(self):
+        """dev_watch must raise CommandError when DEBUG is False."""
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+        from django.test import override_settings
+
+        with override_settings(DEBUG=False):
+            with self.assertRaises(CommandError):
+                call_command("dev_watch")
+
+    @patch("calsync.management.commands.dev_watch._detect_ngrok_url", return_value="")
+    def test_raises_error_when_no_tunnel(self, _mock):
+        """With no running ngrok and no --url, the command must fail."""
+        from django.core.management import call_command
+        from django.core.management.base import CommandError
+        from django.test import override_settings
+
+        with override_settings(DEBUG=True):
+            with self.assertRaises(CommandError):
+                call_command("dev_watch")
+
+    @patch("calsync.management.commands.dev_watch._detect_ngrok_url",
+           return_value="https://abc.ngrok-free.app")
+    @patch("calsync.management.commands.dev_watch.ensure_watch_channel")
+    def test_registers_channel_from_detected_url(self, mock_ensure, _mock_detect):
+        """Auto-detected ngrok URL is passed to ensure_watch_channel."""
+        from django.core.management import call_command
+        from django.test import override_settings
+
+        mock_channel = WatchChannel(
+            channel_id=uuid.uuid4(),
+            resource_id="res",
+            calendar_id="primary",
+            webhook_url="https://abc.ngrok-free.app/api/webhook/",
+            token="tok",
+            expiration=timezone.now() + timedelta(days=7),
+            active=True,
+        )
+        mock_ensure.return_value = mock_channel
+
+        with override_settings(DEBUG=True):
+            call_command("dev_watch")
+
+        mock_ensure.assert_called_once_with(
+            calendar_id="primary",
+            webhook_url="https://abc.ngrok-free.app/api/webhook/",
+        )
+
+    @patch("calsync.management.commands.dev_watch.ensure_watch_channel")
+    def test_explicit_url_overrides_detection(self, mock_ensure):
+        """--url flag bypasses ngrok detection."""
+        from django.core.management import call_command
+        from django.test import override_settings
+
+        mock_channel = WatchChannel(
+            channel_id=uuid.uuid4(),
+            resource_id="res",
+            calendar_id="primary",
+            webhook_url="https://custom.example.com/api/webhook/",
+            token="tok",
+            expiration=timezone.now() + timedelta(days=7),
+            active=True,
+        )
+        mock_ensure.return_value = mock_channel
+
+        with override_settings(DEBUG=True):
+            call_command("dev_watch", url="https://custom.example.com")
+
+        mock_ensure.assert_called_once_with(
+            calendar_id="primary",
+            webhook_url="https://custom.example.com/api/webhook/",
+        )
