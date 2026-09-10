@@ -4,14 +4,17 @@ The start request builds a consent URL and stores CSRF state plus a PKCE verifie
 in the session. The callback validates both values and exchanges Google's short-
 lived code for credentials that can call Calendar APIs.
 
-``client_config()`` reads ``credentials.json`` once and caches the result so
-every call to ``build_service`` or ``verify_id_token`` does not re-read the file.
+``client_config()`` returns the OAuth client credentials, preferring the
+``GOOGLE_CLIENT_ID`` / ``GOOGLE_CLIENT_SECRET`` environment variables (suitable
+for production deployments such as Railway) and falling back to ``credentials.json``
+for local development.
 ``verify_id_token`` extracts the stable ``sub`` and ``email`` claims that
 ``oauth_callback`` uses to resolve the Django user.
 """
 
 import json
 import logging
+import os
 
 from django.conf import settings
 from google_auth_oauthlib.flow import Flow
@@ -62,16 +65,36 @@ def client_type():
 
 
 def client_config() -> dict:
-    """Return the client configuration dict from ``credentials.json``.
+    """Return the client configuration dict for the OAuth flow.
 
-    The result is cached after the first read so repeated calls within a process
-    do not re-read the file. The returned dict has at minimum ``client_id`` and
-    ``client_secret`` keys.
+    Checks ``GOOGLE_CLIENT_ID`` and ``GOOGLE_CLIENT_SECRET`` environment variables
+    first — this is the recommended approach for production deployments (Railway,
+    Heroku, etc.) where mounting a JSON file is inconvenient.
+
+    Falls back to reading ``credentials.json`` when the env vars are absent, which
+    is the standard local development path.
+
+    The result is cached after the first call so repeated calls within a process
+    do not re-read the file or environment.
     """
     global _client_config_cache
     if _client_config_cache is not None:
         return _client_config_cache
 
+    # Prefer explicit env vars (production / Railway).
+    client_id = os.getenv("GOOGLE_CLIENT_ID")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET")
+    if client_id and client_secret:
+        _client_config_cache = {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uris": [settings.GOOGLE_OAUTH_REDIRECT_URI],
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+        }
+        return _client_config_cache
+
+    # Fall back to credentials.json (local development).
     kind = client_type()
     path = settings.GOOGLE_CREDENTIALS_FILE
     config = json.loads(path.read_text())
@@ -117,9 +140,22 @@ def verify_id_token(credentials) -> dict:
 def build_flow(state=None):
     """Create a Google OAuth flow from the project's configured values.
 
-    The client file is validated first, then scopes, redirect URI, and optional
-    callback state are supplied to Google's flow object.
+    When ``GOOGLE_CLIENT_ID`` / ``GOOGLE_CLIENT_SECRET`` env vars are set the
+    flow is built from the in-memory config dict (no file required). Otherwise
+    the flow is built from ``credentials.json`` as in local development.
     """
+    cfg = client_config()
+
+    if os.getenv("GOOGLE_CLIENT_ID") and os.getenv("GOOGLE_CLIENT_SECRET"):
+        # Flow.from_client_config expects the config nested under a "web" key.
+        return Flow.from_client_config(
+            {"web": cfg},
+            scopes=settings.GOOGLE_OAUTH_SCOPES,
+            redirect_uri=settings.GOOGLE_OAUTH_REDIRECT_URI,
+            state=state,
+        )
+
+    # Fall back to credentials.json (local development).
     client_type()
     return Flow.from_client_secrets_file(
         str(settings.GOOGLE_CREDENTIALS_FILE),
