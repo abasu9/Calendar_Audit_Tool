@@ -84,6 +84,8 @@
       gap: 1.25rem;
     }
     .card {
+      min-width: 0;
+      overflow: hidden;
       background: var(--card-bg);
       border: 1px solid var(--border);
       border-radius: 1.25rem;
@@ -170,6 +172,7 @@
     }
     table {
       width: 100%;
+      table-layout: fixed;
       border-collapse: collapse;
       font-size: 0.9rem;
     }
@@ -177,6 +180,8 @@
       text-align: left;
       padding: 0.7rem 0.5rem;
       border-bottom: 1px solid var(--border);
+      overflow-wrap: anywhere;
+      vertical-align: top;
     }
     tbody tr:last-child td { border-bottom: 0; }
     th {
@@ -187,8 +192,19 @@
       letter-spacing: 0.08em;
     }
     td.num, th.num {
+      width: 5.5rem;
       text-align: right;
       font-variant-numeric: tabular-nums;
+      white-space: nowrap;
+      overflow-wrap: normal;
+    }
+    #card-contacts th:nth-child(2),
+    #card-contacts td:nth-child(2) {
+      width: 4.75rem;
+    }
+    #card-contacts th:nth-child(3),
+    #card-contacts td:nth-child(3) {
+      width: 5.5rem;
     }
     .empty-state {
       text-align: center;
@@ -476,7 +492,7 @@
     }
 
     // Load and render the most frequent meeting contacts.
-    // Long names and emails are shortened visually while the full value stays in a title.
+    // Long names and emails wrap inside the contact cell; the full value stays in a title.
     async function loadTopContacts() {
       const card = document.getElementById('card-contacts');
       try {
@@ -493,14 +509,12 @@
         
         data.top_contacts.forEach(contact => {
           // Prefer a saved display name and keep the email as supporting text.
+          // Long values wrap inside the cell so they cannot overflow the card.
           let contactDisplay;
           if (contact.name) {
-            const name = contact.name.length > 22 ? contact.name.substring(0, 19) + '...' : contact.name;
-            const email = contact.email.length > 30 ? contact.email.substring(0, 27) + '...' : contact.email;
-            contactDisplay = `<strong>${name}</strong><br><small style="color:var(--text-muted)">${email}</small>`;
+            contactDisplay = `<strong>${contact.name}</strong><br><small style="color:var(--text-muted)">${contact.email}</small>`;
           } else {
-            const email = contact.email.length > 28 ? contact.email.substring(0, 25) + '...' : contact.email;
-            contactDisplay = email;
+            contactDisplay = contact.email;
           }
           html += `<tr>
             <td title="${contact.name ? contact.name + ' - ' : ''}${contact.email}">${contactDisplay}</td>
