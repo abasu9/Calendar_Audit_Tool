@@ -20,12 +20,15 @@ periodic scheduler.
 - Preview events for the next seven days.
 - Store calendar data in Supabase or local PostgreSQL.
 - Review meeting audit metrics from the Audit Dashboard.
+- Deploy to Railway, Heroku, or any platform-as-a-service using the included
+  `Procfile` and Gunicorn.
 
 ## Technology
 
 - Python 3.14
 - Django 6.1
 - Django REST Framework
+- Gunicorn (production WSGI server)
 - PostgreSQL through Psycopg 3
 - Supabase PostgreSQL or a local PostgreSQL server
 - Google Calendar API
@@ -138,6 +141,21 @@ REPORT_TIME_ZONE=America/Chicago
 `credentials.json` is gitignored and must never be committed. User access and
 refresh tokens are stored in the `googlecal_googlecredential` database table.
 
+#### OAuth credentials without a file (production)
+
+On platforms where mounting a JSON file is inconvenient (Railway, Heroku, and
+similar), supply the OAuth client credentials directly through environment
+variables instead of `credentials.json`:
+
+```dotenv
+GOOGLE_CLIENT_ID=your-client-id.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET=your-client-secret
+```
+
+When both variables are set the application builds the OAuth flow from them and
+does not read `credentials.json` at all. When they are absent it falls back to
+`credentials.json`, the standard local-development path.
+
 ## Database initialization
 
 Apply the Django schema to the configured database:
@@ -170,7 +188,30 @@ Both steps run in a background thread; the dashboard is available immediately.
 If the initial import fails for any reason, click **Sync calendar** on the
 dashboard to retry.
 
-## Real-time webhook sync — production
+## Deployment
+
+The repository includes a `Procfile` that serves the application with Gunicorn:
+
+```procfile
+web: gunicorn config.wsgi:application
+```
+
+This works out of the box on Railway, Heroku, and other platforms that read a
+`Procfile`. For a typical Railway deployment:
+
+1. Provision a PostgreSQL database (or point `DATABASE_URL` at Supabase).
+2. Set `SECRET_KEY`, `DEBUG=False`, `ALLOWED_HOSTS`, and `CSRF_TRUSTED_ORIGINS`.
+3. Provide OAuth credentials with `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`
+   (see [OAuth credentials without a file](#oauth-credentials-without-a-file-production))
+   so no `credentials.json` file is needed.
+4. Set `PUBLIC_BASE_URL` to the deployed HTTPS domain (see below).
+
+The application sets `SECURE_PROXY_SSL_HEADER` to trust the `X-Forwarded-Proto`
+header from Railway and similar reverse proxies, so `request.build_absolute_uri()`
+returns `https://` URLs. This is required for the Google OAuth callback to pass
+oauthlib's HTTPS check when running behind a TLS-terminating proxy.
+
+### Real-time webhook sync — production
 
 Set `PUBLIC_BASE_URL` to your production HTTPS domain in `.env`:
 
@@ -178,12 +219,13 @@ Set `PUBLIC_BASE_URL` to your production HTTPS domain in `.env`:
 PUBLIC_BASE_URL=https://app.example.com
 ```
 
-That is the only configuration change needed. After the next OAuth connection
-(or **Sync calendar** click), the application registers a push channel pointing
-at `https://app.example.com/api/webhook/` automatically. Channels expire every
-seven days and are renewed on the next manual sync, so no cron job is required.
+That is the only additional configuration needed for webhooks. After the next
+OAuth connection (or **Sync calendar** click), the application registers a push
+channel pointing at `https://app.example.com/api/webhook/` automatically.
+Channels expire every seven days and are renewed on the next manual sync, so no
+cron job is required.
 
-## Real-time webhook sync — local development
+### Real-time webhook sync — local development
 
 Google cannot deliver push notifications to `localhost`, so local development
 requires an HTTPS tunnel. [ngrok](https://ngrok.com) works well.
