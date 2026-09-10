@@ -3,6 +3,7 @@ Django>=6.1,<6.2
 djangorestframework>=3.16
 psycopg[binary]>=3.3
 python-dotenv>=1.1
+gunicorn>=22.0
 
 # Google Calendar API and OAuth support.
 google-api-python-client>=2.200
