@@ -204,6 +204,7 @@ dashboard to retry.
 The repository includes a `Procfile` that serves the application with Gunicorn:
 
 ```procfile
+<<<<<<< HEAD
 web: python manage.py migrate --noinput && gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 2 --timeout 120
 ```
 
@@ -211,6 +212,13 @@ This works out of the box on Railway, Heroku, and other platforms that read a
 `Procfile`. Migrations run automatically on every deploy before Gunicorn starts,
 so the database is always up to date without a manual step. For a typical Railway
 deployment:
+=======
+web: gunicorn config.wsgi:application
+```
+
+This works out of the box on Railway, Heroku, and other platforms that read a
+`Procfile`. For a typical Railway deployment:
+>>>>>>> 85c973dbf408ffdd2cef0d563447c6b85916dea4
 
 1. Provision a PostgreSQL database (or point `DATABASE_URL` at Supabase).
 2. Set `SECRET_KEY`, `DEBUG=False`, `ALLOWED_HOSTS`, and `CSRF_TRUSTED_ORIGINS`.
